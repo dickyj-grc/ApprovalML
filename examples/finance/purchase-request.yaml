@@ -1,0 +1,170 @@
+name: "Purchase Request Approval"
+description: "Multi-level approval process for purchase requests with conditional routing"
+version: "1.0"
+
+form:
+  fields:
+    - name: "description"
+      type: "textarea"
+      label: "Item Description"
+      required: true
+      placeholder: "Describe the item or service you want to purchase"
+
+    - name: "amount"
+      type: "currency"
+      label: "Request Amount"
+      required: true
+      validation:
+        min_value: 0.01
+        max_value: 100000
+
+    - name: "department"
+      type: "select"
+      label: "Department"
+      required: true
+      options:
+        - value: "engineering"
+          label: "Engineering"
+        - value: "marketing"
+          label: "Marketing"
+        - value: "sales"
+          label: "Sales"
+        - value: "hr"
+          label: "Human Resources"
+        - value: "finance"
+          label: "Finance"
+
+    - name: "justification"
+      type: "textarea"
+      label: "Business Justification"
+      required: true
+      placeholder: "Explain why this purchase is necessary for business operations"
+
+    - name: "supplier"
+      type: "text"
+      label: "Preferred Supplier"
+      required: false
+
+    - name: "items_to_purchase"
+      type: "line_items"
+      label: "Items to Purchase"
+      min_items: 1
+      max_items: 20
+    
+      item_fields:
+        - name: "item_description"
+          type: "text"
+          label: "Item Description"
+          required: true
+        
+        - name: "quantity"
+          type: "number"
+          label: "Quantity"
+          required: true
+          validation:
+            min_value: 1
+            max_value: 1000
+        
+        - name: "unit_price"
+          type: "currency"
+          label: "Unit Price"
+          required: true
+          validation:
+            min_value: 0.01
+            max_value: 100000
+        
+        - name: "total" # calculated field
+          type: "currency"
+          label: "Total"
+          readonly: true
+          calculated: true
+          formula: "quantity * unit_price"
+ 
+
+workflow:
+  # Step 1: Supervisor Review
+  supervisor_approval:
+    name: "supervisor_approval"
+    type: "decision"
+    description: "Supervisor Review"
+    approver: "${requestor.supervisor}"
+    on_approve:
+      continue_to: "conditional_manager_approval"
+    on_reject:
+      notify_requestor: "Request denied by supervisor"
+      end_workflow: true
+
+  # Step 2: Conditional Manager Approval (based on amount)
+  conditional_manager_approval:
+    name: "conditional_manager_approval"
+    type: "conditional_split"
+    description: "Manager Approval (Amount-Based)"
+    choices:
+      - conditions: "amount <= 1000"
+        continue_to: "department_manager_approval"
+    default:
+      continue_to: "head_of_department_approval"
+
+  # Step 3a: Department Manager (for small purchases)
+  department_manager_approval:
+    name: "department_manager_approval"
+    type: "decision"
+    description: "Department Manager Approval"
+    approver: "${requestor.manager}"
+    on_approve:
+      continue_to: "purchasing_officers_review"
+    on_reject:
+      notify_requestor: "Request denied by department manager"
+      end_workflow: true
+
+  # Step 3b: Head of Department (for large purchases)
+  head_of_department_approval:
+    name: "head_of_department_approval"
+    type: "decision"
+    description: "Head of Department Approval"
+    approver: "${requestor.head_of_department}"
+    on_approve:
+      continue_to: "purchasing_officers_review"
+    on_reject:
+      notify_requestor: "Request denied by head of department"
+      end_workflow: true
+
+  # Step 4: Purchasing Officers Review (Parallel Approval)
+  purchasing_officers_review:
+    name: "purchasing_officers_review"
+    type: "parallel_approval"
+    description: "Purchasing Officers Review\nAny One of 3"
+    approvers:
+      - role: "purchasing_officer_1"
+      - role: "purchasing_officer_2" 
+      - role: "purchasing_officer_3"
+    approval_strategy: "any_one"
+    on_approve:
+      continue_to: "completion"
+    on_reject:
+      notify_requestor: "Request rejected by purchasing"
+      end_workflow: true
+
+  # Step 5: Completion
+  completion:
+    name: "completion"
+    type: "end"
+    notify_requestor: "Purchase request has been fully approved and processed"
+
+
+settings:
+  timeout:
+    supervisor_approval: "48_hours"
+    department_manager_approval: "24_hours"
+    head_of_department_approval: "72_hours"
+    purchasing_officers_review: "5_business_days"
+
+  escalation:
+    - after_timeout: "notify_next_level"
+    - final_escalation: "finance_director"
+
+  notifications:
+    send_reminders: true
+    reminder_intervals: ["24_hours", "2_hours"]
+
+  

@@ -1,0 +1,321 @@
+# Purchase Order with Multi-Level Signatures
+# Demonstrates: line_items, budget validation, multi-level approvals, and vendor signatures
+
+name: "Purchase Order Approval with Signatures"
+description: "Multi-level purchase order workflow with budget checks, approvals, and vendor signature collection"
+type: "approval"
+
+form:
+  fields:
+    - name: "vendor_name"
+      type: "text"
+      label: "Vendor Name"
+      required: true
+
+    - name: "vendor_email"
+      type: "email"
+      label: "Vendor Email"
+      required: true
+      help_text: "Email for signature request"
+
+    - name: "vendor_contact"
+      type: "text"
+      label: "Vendor Contact Person"
+      required: true
+
+    - name: "po_number"
+      type: "text"
+      label: "PO Number"
+      required: false
+      help_text: "Auto-generated if left blank"
+
+    - name: "department"
+      type: "dropdown"
+      label: "Department"
+      required: true
+      options:
+        - label: "IT"
+          value: "it"
+        - label: "Operations"
+          value: "operations"
+        - label: "Marketing"
+          value: "marketing"
+        - label: "Finance"
+          value: "finance"
+
+    - name: "category"
+      type: "dropdown"
+      label: "Purchase Category"
+      required: true
+      options:
+        - label: "Equipment"
+          value: "equipment"
+        - label: "Software/Licenses"
+          value: "software"
+        - label: "Services"
+          value: "services"
+        - label: "Supplies"
+          value: "supplies"
+
+    - name: "urgency"
+      type: "dropdown"
+      label: "Urgency Level"
+      required: true
+      options:
+        - label: "Standard (2-4 weeks)"
+          value: "standard"
+        - label: "Urgent (1 week)"
+          value: "urgent"
+        - label: "Critical (1-3 days)"
+          value: "critical"
+
+    - name: "items"
+      type: "line_items"
+      label: "Purchase Items"
+      required: true
+      item_fields:
+        - name: "item_description"
+          label: "Item Description"
+          type: "text"
+          required: true
+        - name: "quantity"
+          label: "Qty"
+          type: "number"
+          required: true
+        - name: "unit_price"
+          label: "Unit Price"
+          type: "number"
+          required: true
+        - name: "total"
+          label: "Total"
+          type: "number"
+          formula: "{{quantity}} * {{unit_price}}"
+          readonly: true
+
+    - name: "grand_total"
+      type: "number"
+      label: "Grand Total"
+      required: true
+
+    - name: "business_reason"
+      type: "textarea"
+      label: "Business Justification"
+      required: true
+      placeholder: "Explain why this purchase is necessary"
+
+    - name: "budget_code"
+      type: "text"
+      label: "Budget Code"
+      required: true
+      placeholder: "e.g., DEPT-2024-Q1-001"
+
+    - name: "expected_delivery"
+      type: "date"
+      label: "Expected Delivery Date"
+      required: true
+
+    - name: "quote_attachment"
+      type: "file_upload"
+      label: "Vendor Quote/Invoice"
+      required: true
+      help_text: "Upload vendor quote or proforma invoice"
+
+    - name: "requestor_signature"
+      type: "signature"
+      label: "Requestor Signature"
+      required: true
+      help_text: "Confirm accuracy of information"
+
+workflow:
+  # Step 1: Budget Holder Review
+  budget_holder_review:
+    name: "budget_holder_review"
+    type: "decision"
+    approval_type: "needs_to_approve"
+    approver:
+      role: "${requestor.manager}"
+    on_approve:
+      continue_to: "budget_route"
+    on_reject:
+      end_workflow: true
+
+  # Route: small purchases skip procurement review
+  budget_route:
+    name: "budget_route"
+    type: "conditional_split"
+    choices:
+      - conditions: "grand_total < 5000"
+        continue_to: "dept_manager_approval"
+    default:
+      continue_to: "procurement_review"
+
+  # Step 2a: Department Manager (for smaller purchases)
+  dept_manager_approval:
+    name: "dept_manager_approval"
+    type: "decision"
+    approval_type: "needs_to_approve"
+    approver:
+      role: "${requestor.manager}"
+    on_approve:
+      continue_to: "small_purchase_route"
+    on_reject:
+      end_workflow: true
+
+  # Route: very small purchases go straight to processing
+  small_purchase_route:
+    name: "small_purchase_route"
+    type: "conditional_split"
+    choices:
+      - conditions: "grand_total < 1000"
+        continue_to: "procurement_processing"
+    default:
+      continue_to: "finance_review"
+
+  # Step 2b: Procurement Review (for larger purchases)
+  procurement_review:
+    name: "procurement_review"
+    type: "decision"
+    approval_type: "needs_to_recommend"
+    approver:
+      role: "Procurement Officer"
+    on_approve:
+      continue_to: "finance_review"
+    on_reject:
+      end_workflow: true
+
+  # Step 3: Finance Review
+  finance_review:
+    name: "finance_review"
+    type: "decision"
+    approval_type: "needs_to_approve"
+    approver:
+      role: "Finance Manager"
+    on_approve:
+      continue_to: "finance_route"
+    on_reject:
+      end_workflow: true
+
+  # Route: high-value or critical purchases need director approval
+  finance_route:
+    name: "finance_route"
+    type: "conditional_split"
+    choices:
+      - conditions: "grand_total > 25000 or urgency == 'critical'"
+        continue_to: "director_approval"
+    default:
+      continue_to: "manager_signature"
+
+  # Step 4: Director Approval (for high-value or critical purchases)
+  director_approval:
+    name: "director_approval"
+    type: "decision"
+    approval_type: "needs_to_approve"
+    approver:
+      role: "Director"
+    on_approve:
+      continue_to: "high_value_route"
+    on_reject:
+      end_workflow: true
+
+  # Route: very high value needs executive signature
+  high_value_route:
+    name: "high_value_route"
+    type: "conditional_split"
+    choices:
+      - conditions: "grand_total > 100000"
+        continue_to: "executive_signature"
+    default:
+      continue_to: "manager_signature"
+
+  # Step 5a: Executive Signature (for very high amounts)
+  executive_signature:
+    name: "executive_signature"
+    type: "decision"
+    approval_type: "needs_to_sign"
+    approver:
+      role: "CEO"
+    on_approve:
+      continue_to: "manager_signature"
+    on_reject:
+      end_workflow: true
+
+  # Step 5b: Department Manager Signature
+  manager_signature:
+    name: "manager_signature"
+    type: "decision"
+    approval_type: "needs_to_sign"
+    approver:
+      role: "${requestor.manager}"
+    on_approve:
+      continue_to: "finance_signature"
+    on_reject:
+      end_workflow: true
+
+  # Step 6: Finance Signature
+  finance_signature:
+    name: "finance_signature"
+    type: "decision"
+    approval_type: "needs_to_sign"
+    approver:
+      role: "Finance Manager"
+    on_approve:
+      continue_to: "it_route"
+    on_reject:
+      end_workflow: true
+
+  # Route: software/equipment purchases need IT review
+  it_route:
+    name: "it_route"
+    type: "conditional_split"
+    choices:
+      - conditions: "category == 'software' or category == 'equipment'"
+        continue_to: "it_approval"
+    default:
+      continue_to: "procurement_processing"
+
+  # Step 7: IT Department Approval (conditional)
+  it_approval:
+    name: "it_approval"
+    type: "decision"
+    approval_type: "needs_to_acknowledge"
+    approver:
+      role: "IT Manager"
+    on_approve:
+      continue_to: "procurement_processing"
+    on_reject:
+      end_workflow: true
+
+  # Step 8: Procurement Processing & PO Generation
+  procurement_processing:
+    name: "procurement_processing"
+    type: "decision"
+    approval_type: "needs_to_acknowledge"
+    approver:
+      role: "Procurement Officer"
+    on_approve:
+      continue_to: "vendor_signature"
+    on_reject:
+      end_workflow: true
+
+  # Step 9: Vendor Signature Collection
+  vendor_signature:
+    name: "vendor_signature"
+    type: "decision"
+    approval_type: "needs_to_sign"
+    approver:
+      role: "Vendor"
+    on_approve:
+      continue_to: "final_acknowledgement"
+    on_reject:
+      continue_to: "procurement_processing"
+
+  # Step 10: Final Acknowledgement & Distribution
+  final_acknowledgement:
+    name: "final_acknowledgement"
+    type: "decision"
+    approval_type: "receives_a_copy"
+    approver:
+      role: "Procurement Officer"
+    notify_on_arrival: true
+    on_approve:
+      end_workflow: true

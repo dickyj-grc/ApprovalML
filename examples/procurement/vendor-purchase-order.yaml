@@ -1,0 +1,154 @@
+# Vendor Purchase Order with External Vendor Signature
+# This workflow demonstrates external/unregistered approvers for vendor sign-offs
+
+name: "Vendor Purchase Order"
+description: "Purchase order requiring vendor signature before processing"
+type: "vendor_po"
+
+form:
+  fields:
+    - name: "vendor_email"
+      type: "email"
+      label: "Vendor Email"
+      required: true
+      placeholder: "vendor@company.com"
+
+    - name: "vendor_name"
+      type: "text"
+      label: "Vendor Contact Name"
+      required: true
+      placeholder: "Jane Smith"
+
+    - name: "vendor_company"
+      type: "text"
+      label: "Vendor Company Name"
+      required: true
+      placeholder: "ABC Supplies Inc."
+
+    - name: "items"
+      type: "line_items"
+      label: "Order Items"
+      required: true
+      item_fields:
+        - name: "description"
+          label: "Item Description"
+          type: "text"
+        - name: "quantity"
+          label: "Quantity"
+          type: "number"
+        - name: "unit_price"
+          label: "Unit Price"
+          type: "currency"
+        - name: "total"
+          label: "Total"
+          type: "currency"
+          formula: "quantity * unit_price"
+
+    - name: "total_amount"
+      type: "currency"
+      label: "Total Amount"
+      required: true
+      formula: "sum(items.total)"
+
+    - name: "delivery_date"
+      type: "date"
+      label: "Expected Delivery Date"
+      required: true
+
+    - name: "special_terms"
+      type: "textarea"
+      label: "Special Terms or Notes"
+      placeholder: "Any special delivery instructions, payment terms, etc."
+
+workflow:
+  # Step 1: Internal approval from purchasing manager
+  purchasing_approval:
+    name: "purchasing_approval"
+    type: "decision"
+    description: "Purchasing Manager Approval"
+    approver: "purchasing_manager"
+    approval_type: "needs_to_approve"
+    on_approve:
+      continue_to: "finance_review"
+    on_reject:
+      notify_requestor: "Purchase order denied by purchasing manager"
+      end_workflow: true
+
+  # Step 2: Finance review for high-value orders
+  finance_review:
+    name: "finance_review"
+    type: "conditional_split"
+    description: "Finance Review if Total > $5000"
+    choices:
+      - conditions: "total_amount > 5000"
+        continue_to: "finance_approval"
+    default:
+      continue_to: "vendor_signature"
+
+  # Step 3: Finance approval for high-value orders
+  finance_approval:
+    name: "finance_approval"
+    type: "decision"
+    description: "Finance Manager Approval"
+    approver: "finance_manager"
+    approval_type: "needs_to_approve"
+    on_approve:
+      continue_to: "vendor_signature"
+    on_reject:
+      notify_requestor: "High-value purchase order denied by finance"
+      end_workflow: true
+
+  # Step 4: External vendor signature (key feature demonstration)
+  vendor_signature:
+    name: "vendor_signature"
+    type: "decision"
+    description: "Vendor Signature Required"
+    approver:
+      email: "${form.vendor_email}"
+      name: "${form.vendor_name}"
+      position: "${form.vendor_company}"
+      employee_type: "external"
+    approval_type: "needs_to_sign"
+    on_approve:
+      continue_to: "procurement_processing"
+    on_reject:
+      notify_requestor: "Vendor declined the purchase order"
+      end_workflow: true
+
+  # Step 5: Procurement processing
+  procurement_processing:
+    name: "procurement_processing"
+    type: "notification"
+    description: "Notify procurement team to process order"
+    recipients:
+      - email: "procurement@company.com"
+    notification:
+      message:
+        subject: "New Purchase Order Ready for Processing"
+        body: "A new purchase order has been approved and is ready for processing."
+    on_complete:
+      continue_to: "completion"
+
+  # Step 6: Notify all parties
+  completion:
+    name: "completion"
+    type: "decision"
+    description: "PO Completed - Notify All Parties"
+    approvers:
+      - role: "requestor"
+        approval_type: "receives_a_copy"
+      - role: "purchasing_manager"
+        approval_type: "receives_a_copy"
+    on_complete:
+      notify_requestor: "Purchase order completed and sent to vendor"
+      end_workflow: true
+
+settings:
+  timeout:
+    purchasing_approval: "48_hours"
+    finance_approval: "48_hours"
+    vendor_signature: "5_business_days"
+
+  notifications:
+    send_reminders: true
+    reminder_intervals: ["48_hours", "24_hours"]

@@ -1,0 +1,133 @@
+# docs/examples/leave-request.yaml
+name: "Employee Leave Request"
+description: "HR approval workflow for employee leave requests"
+type: "leave_request"
+
+form:
+  fields:
+    - name: "leave_type"
+      type: "select"
+      label: "Type of Leave"
+      required: true
+      options:
+        - value: "vacation"
+          label: "Vacation"
+        - value: "sick"
+          label: "Sick Leave"
+        - value: "personal"
+          label: "Personal Leave"
+        - value: "unpaid"
+          label: "Unpaid Leave"
+        - value: "maternity"
+          label: "Maternity/Paternity Leave"
+
+    - name: "start_date"
+      type: "date"
+      label: "Start Date"
+      required: true
+
+    - name: "end_date"
+      type: "date"
+      label: "End Date"
+      required: true
+
+    - name: "total_days"
+      type: "number"
+      label: "Total Days"
+      required: true
+      validation:
+        min: 0.5
+        max: 90
+
+    - name: "reason"
+      type: "textarea"
+      label: "Reason for Leave"
+      required: true
+
+    - name: "coverage_plan"
+      type: "textarea"
+      label: "Work Coverage Plan"
+      required: false
+      placeholder: "How will your work be covered during your absence?"
+
+workflow:
+  # Step 1: Manager Approval
+  manager_approval:
+    name: "manager_approval"
+    type: "decision"
+    description: "Manager Approval"
+    approver: "${requestor.manager}"
+    on_approve:
+      continue_to: "duration_check"
+    on_reject:
+      notify_requestor: "Leave request denied by manager"
+      end_workflow: true
+
+  # Step 2: Duration-based routing
+  duration_check:
+    name: "duration_check"
+    type: "conditional_split"
+    description: "Duration-based Routing"
+    choices:
+      - conditions: "total_days > 5"
+        continue_to: "hr_approval"
+    default:
+      continue_to: "leave_type_check"
+
+  # Step 3a: HR Approval for Extended Leave
+  hr_approval:
+    name: "hr_approval"
+    type: "decision"
+    description: "HR Review (Extended Leave)"
+    approver: "head_of_hr"
+    on_approve:
+      continue_to: "leave_type_check"
+    on_reject:
+      notify_requestor: "Extended leave request denied by HR"
+      end_workflow: true
+
+  # Step 4: Leave type specific requirements
+  leave_type_check:
+    name: "leave_type_check"
+    type: "conditional_split"
+    description: "Leave Type Check"
+    choices:
+      - conditions: "leave_type == 'unpaid'"
+        continue_to: "hr_director_approval"
+    default:
+      continue_to: "final_processing"
+
+  # Step 5a: HR Director Approval for Unpaid Leave
+  hr_director_approval:
+    name: "hr_director_approval"
+    type: "decision"
+    description: "HR Director Approval (Unpaid Leave)"
+    approver: "hr_director"
+    on_approve:
+      continue_to: "final_processing"
+    on_reject:
+      notify_requestor: "Unpaid leave request denied by HR Director"
+      end_workflow: true
+
+  # Step 6: Final Processing
+  # - update_calendar: true
+  # - notify_team: true
+  # - update_hr_system: true
+  # - send_confirmation: true
+  final_processing:
+    name: "final_processing"
+    type: "end"
+    description: "Leave Request Processing"
+    notify_requestor: "Leave request approved and processed"
+
+
+settings:
+  timeout:
+    manager_approval: "48_hours"
+    hr_approval: "24_hours"
+    hr_director_approval: "72_hours"
+
+  notifications:
+    advance_notice: true
+    notify_team: true
+    calendar_integration: true

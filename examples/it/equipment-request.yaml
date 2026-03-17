@@ -1,0 +1,132 @@
+# docs/examples/it-equipment.yaml
+name: "IT Equipment Request"
+description: "Workflow for requesting IT equipment with security review"
+type: "it_equipment"
+
+form:
+  fields:
+    - name: "equipment_type"
+      type: "select"
+      label: "Equipment Type"
+      required: true
+      options:
+        - value: "laptop"
+          label: "Laptop"
+        - value: "desktop"
+          label: "Desktop Computer"
+        - value: "monitor"
+          label: "Monitor"
+        - value: "mobile"
+          label: "Mobile Device"
+        - value: "software"
+          label: "Software License"
+        - value: "other"
+          label: "Other Equipment"
+
+    - name: "specifications"
+      type: "textarea"
+      label: "Specifications"
+      required: true
+      placeholder: "List required specifications, model numbers, etc."
+
+    - name: "justification"
+      type: "textarea"
+      label: "Business Justification"
+      required: true
+
+    - name: "urgency"
+      type: "select"
+      label: "Urgency"
+      required: true
+      options:
+        - value: "low"
+          label: "Low (4+ weeks)"
+        - value: "medium"
+          label: "Medium (2-4 weeks)"
+        - value: "high"
+          label: "High (Within 2 weeks)"
+        - value: "critical"
+          label: "Critical (ASAP)"
+
+    - name: "estimated_cost"
+      type: "currency"
+      label: "Estimated Cost"
+      required: true
+
+workflow:
+  # Step 1: IT Manager Review
+  it_manager_approval:
+    name: "it_manager_approval"
+    type: "decision"
+    description: "IT Manager Review"
+    approver: "it_manager"
+    on_approve:
+      continue_to: "security_check"
+    on_reject:
+      notify_requestor: "IT equipment request denied by IT Manager"
+      end_workflow: true
+
+  # Step 2: Security Review (for software and sensitive equipment)
+  security_check:
+    name: "security_check"
+    type: "conditional_split"
+    description: "Security Review Check"
+    choices:
+      - conditions: "equipment_type == 'software'"
+        continue_to: "security_approval"
+    default:
+      continue_to: "cost_approval"
+
+  # Step 3a: Security Team Approval
+  security_approval:
+    name: "security_approval"
+    type: "decision"
+    description: "Security Team Review"
+    approver: "security_team"
+    on_approve:
+      continue_to: "cost_approval"
+    on_reject:
+      notify_requestor: "Request denied by security team"
+      end_workflow: true
+
+  # Step 4: Cost-based approval
+  cost_approval:
+    name: "cost_approval"
+    type: "conditional_split"
+    description: "Cost-based Approval Check"
+    choices:
+      - conditions: "estimated_cost > 2000"
+        continue_to: "finance_approval"
+    default:
+      continue_to: "procurement"
+
+  # Step 5a: Finance Approval (for high-cost equipment)
+  finance_approval:
+    name: "finance_approval"
+    type: "decision"
+    description: "Finance Approval (High Cost)"
+    approver: "finance_manager"
+    on_approve:
+      continue_to: "procurement"
+    on_reject:
+      notify_requestor: "High-cost equipment denied by finance"
+      end_workflow: true
+
+  # Step 6: Procurement Processing
+  # - create_purchase_order: true
+  # - notify_it_team: "New equipment request approved for procurement"
+  procurement:
+    name: "procurement"
+    type: "end"
+    description: "Procurement Processing"
+    notify_requestor: "Equipment request approved and sent to procurement"
+
+settings:
+  timeout:
+    it_manager_approval: "48_hours"
+    security_approval: "72_hours"
+    finance_approval: "48_hours"
+
+  notifications:
+    urgent_escalation: true
+    procurement_integration: true

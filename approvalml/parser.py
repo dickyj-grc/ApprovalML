@@ -1,0 +1,942 @@
+"""
+ApprovalML YAML Parser with comprehensive validation and schema support.
+"""
+
+import re
+from enum import Enum
+from typing import Any, Optional, Union
+
+import yaml
+from pydantic import BaseModel, ValidationError, ValidationInfo, field_validator, model_validator
+
+
+class FieldType(str, Enum):
+    TEXT = "text"
+    TEXTAREA = "textarea"
+    EMAIL = "email"
+    CURRENCY = "currency"
+    NUMBER = "number"
+    DATE = "date"
+    DROPDOWN = "dropdown"  # Alias for select - more intuitive naming
+    SELECT = "select"
+    MULTISELECT = "multiselect"
+    CHECKBOX = "checkbox"
+    RADIO = "radio"
+    FILE_UPLOAD = "file_upload"
+    SIGNATURE = "signature"  # Digital signature capture
+    RICHTEXT = "richtext"  # WYSIWYG editor with HTML formatting
+    HIDDEN = "hidden"  # Hidden field for storing metadata
+    LINE_ITEMS = "line_items"
+    AUTOCOMPLETE = "autocomplete"  # Search-as-you-type with data source
+    AUTONUMBER = "autonumber"  # Auto-incrementing sequential number with optional prefix/padding
+
+
+class StepType(str, Enum):
+    DECISION = "decision"
+    PARALLEL_APPROVAL = "parallel_approval"
+    CONDITIONAL_SPLIT = "conditional_split"
+    AUTOMATIC = "automatic"  # For API/connector calls only
+    NOTIFICATION = "notification"  # For sending notifications
+    END = "end"
+
+
+class ParallelStrategy(str, Enum):
+    ANY_ONE = "any_one"
+    ALL = "all"
+
+
+class ApprovalType(str, Enum):
+    NEEDS_TO_APPROVE = "needs_to_approve"
+    NEEDS_TO_SIGN = "needs_to_sign"
+    NEEDS_TO_RECOMMEND = "needs_to_recommend"
+    NEEDS_TO_ACKNOWLEDGE = "needs_to_acknowledge"
+    NEEDS_TO_CALL_ACTION = "needs_to_call_action"
+    RECEIVES_A_COPY = "receives_a_copy"
+
+
+class ResponsiveLayout(BaseModel):
+    """Responsive layout breakpoint configuration"""
+    tablet: Optional[int] = None  # Max columns on tablet
+    mobile: Optional[int] = None  # Max columns on mobile (usually 1)
+
+
+class FormSection(BaseModel):
+    """Layout section for organizing form fields"""
+    id: str
+    title: str
+    description: Optional[str] = None
+    initial: bool = False  # Whether this section is shown on initial submission
+    grid: list[list[str]]  # Grid layout: rows with field names
+
+    @field_validator('grid')
+    @classmethod
+    def validate_grid(cls, v):
+        """Validate grid structure"""
+        if not v or len(v) == 0:
+            raise ValueError("Grid must contain at least one row")
+        for row in v:
+            if not isinstance(row, list):
+                raise ValueError("Each grid row must be a list")
+        return v
+
+
+class FormLayout(BaseModel):
+    """Form layout configuration"""
+    sections: list[FormSection]
+    responsive: Optional[ResponsiveLayout] = None
+
+    @field_validator('sections')
+    @classmethod
+    def validate_sections(cls, v):
+        """Validate sections have unique IDs"""
+        if not v or len(v) == 0:
+            raise ValueError("Layout must contain at least one section")
+        section_ids = [s.id for s in v]
+        if len(section_ids) != len(set(section_ids)):
+            raise ValueError("Section IDs must be unique")
+        return v
+
+
+class FooterColumns(BaseModel):
+    """Responsive column configuration for footer"""
+    desktop: int = 3
+    tablet: int = 2
+    mobile: int = 1
+
+    @field_validator('desktop', 'tablet', 'mobile')
+    @classmethod
+    def validate_columns(cls, v):
+        if v < 1 or v > 12:
+            raise ValueError("Column count must be between 1 and 12")
+        return v
+
+
+class FooterItem(BaseModel):
+    """Footer item configuration (message, legend, etc.)"""
+    type: str  # "message", "legend", "divider", "image"
+    content: Optional[Union[str, dict[str, str]]] = None  # String or key-value pairs for legend
+    colspan: int = 1
+    align: Optional[str] = None  # "left", "center", "right"
+    valign: Optional[str] = None  # "top", "middle", "bottom"
+    style: Optional[dict[str, str]] = None  # CSS styles
+
+    @field_validator('type')
+    @classmethod
+    def validate_type(cls, v):
+        valid_types = ["message", "legend", "divider", "image"]
+        if v not in valid_types:
+            raise ValueError(f"Footer item type must be one of: {', '.join(valid_types)}")
+        return v
+
+    @field_validator('align')
+    @classmethod
+    def validate_align(cls, v):
+        if v and v not in ["left", "center", "right", "justify"]:
+            raise ValueError("align must be one of: left, center, right, justify")
+        return v
+
+    @field_validator('valign')
+    @classmethod
+    def validate_valign(cls, v):
+        if v and v not in ["top", "middle", "bottom"]:
+            raise ValueError("valign must be one of: top, middle, bottom")
+        return v
+
+    @field_validator('colspan')
+    @classmethod
+    def validate_colspan(cls, v):
+        if v < 1 or v > 12:
+            raise ValueError("colspan must be between 1 and 12")
+        return v
+
+
+class FormFooter(BaseModel):
+    """Form footer configuration"""
+    columns: Optional[FooterColumns] = None
+    padding: Optional[str] = None
+    background: Optional[str] = None
+    border_top: Optional[str] = None
+    items: list[FooterItem] = []
+
+    @field_validator('items')
+    @classmethod
+    def validate_items(cls, v):
+        if not v or len(v) == 0:
+            raise ValueError("Footer must contain at least one item")
+        return v
+
+
+class DataSourceParam(BaseModel):
+    """Parameter configuration for data source"""
+    name: str  # Parameter name
+    from_field: str  # Field reference like "field.department" or "variable.user_id"
+
+
+class DataSourceConfig(BaseModel):
+    """Data source configuration for dynamic fields - handles both data fetching and response parsing"""
+    source_id: str  # Data source ID (connector_id will be looked up from database)
+    params: Optional[list[DataSourceParam]] = None  # Parameters to pass to data source
+
+    # Response parsing configuration (how to interpret the data source response)
+    object_path: Optional[str] = None  # JSONPath to data array (e.g., "$.data.items"), defaults to root if omitted
+    value_field: Optional[str] = None  # Field name to extract as value; if omitted, stores entire object
+    label_field: Optional[str] = None  # Field name to use for label (required for display)
+    display: Optional[str] = None  # Optional display template like "{name} - {email}"
+
+
+class SearchConfig(BaseModel):
+    """Search UI behavior configuration for autocomplete fields"""
+    min_length: int = 3  # Minimum characters before searching
+    debounce_ms: int = 300  # Debounce delay in milliseconds
+    max_results: Optional[int] = 50  # Maximum results to show
+
+
+class OptionsConfig(BaseModel):
+    """Options configuration - can be either static list or dynamic data source"""
+    data_source: Optional[DataSourceConfig] = None  # Dynamic options from data source
+
+    @model_validator(mode='after')
+    def validate_options_config(self):
+        """Validate that data_source is provided for dynamic options"""
+        if not self.data_source:
+            raise ValueError("Options must have data_source configured")
+        return self
+
+
+class FormField(BaseModel):
+    """Validation schema for form fields"""
+    name: Optional[str] = None  # For array format
+    label: str
+    type: FieldType
+    required: bool = False
+    description: Optional[str] = None
+    placeholder: Optional[str] = None
+    default_value: Optional[Union[str, int, float, bool]] = None
+
+    # Calculated field support
+    readonly: Optional[bool] = None
+    calculated: Optional[bool] = None
+    formula: Optional[str] = None
+
+    # Currency field support
+    currency: Optional[str] = None  # Currency code (e.g., "USD", "IDR", "EUR")
+
+    # Line items specific fields
+    min_items: Optional[int] = None
+    max_items: Optional[int] = None
+    item_fields: Optional[list['FormField']] = None
+
+    # Options configuration - supports both static and dynamic options
+    # Static: options: [{"value": "a", "label": "A"}, ...]
+    # Dynamic: options: { data_source: { source_id: "...", ... } }
+    options: Optional[Union[list[Union[str, dict[str, str]]], OptionsConfig]] = None
+
+    # Search UI behavior (for autocomplete only)
+    search: Optional[SearchConfig] = None
+
+    # Radio button display mode
+    display_as: Optional[str] = None  # For radio fields: "buttons" or None (default)
+
+    # File upload specific
+    accept: Optional[str] = None
+    multiple: Optional[bool] = None
+    capture: Optional[str] = None  # "environment" or "user" for camera
+
+    # Autonumber field specific
+    prefix: Optional[str] = None        # e.g. "EXP-", "PO-", "INV-"
+    pad_length: Optional[int] = None    # zero-pad the number to this width (e.g. 5 → "00042")
+    start_value: Optional[int] = None   # first number in the sequence (default 1)
+
+    @field_validator('item_fields')
+    @classmethod
+    def validate_line_items_config(cls, v, info):
+        """Validate line_items configuration"""
+        # Only validate if this is a line_items field
+        if info.data.get('type') == FieldType.LINE_ITEMS:
+            if not v:
+                raise ValueError("line_items field must have item_fields defined")
+            if len(v) == 0:
+                raise ValueError("line_items field must have at least one item field")
+        return v
+
+    @field_validator('min_items')
+    @classmethod
+    def validate_min_items(cls, v, info):
+        """Validate min_items configuration"""
+        if info.data.get('type') == FieldType.LINE_ITEMS and v is not None:
+            if v < 0:
+                raise ValueError("min_items must be 0 or greater")
+        return v
+
+    @field_validator('max_items')
+    @classmethod
+    def validate_max_items(cls, v, info):
+        """Validate max_items configuration"""
+        if info.data.get('type') == FieldType.LINE_ITEMS and v is not None:
+            min_items = info.data.get('min_items', 0)
+            if v < min_items:
+                raise ValueError("max_items must be greater than or equal to min_items")
+            if v > 100:  # reasonable upper limit
+                raise ValueError("max_items should not exceed 100")
+        return v
+
+    # Validation rules
+    min_value: Optional[Union[int, float]] = None
+    max_value: Optional[Union[int, float]] = None
+    min_length: Optional[int] = None
+    max_length: Optional[int] = None
+    pattern: Optional[str] = None
+
+    # File upload specific (legacy, kept for compatibility)
+    allowed_extensions: Optional[list[str]] = None
+    max_file_size: Optional[str] = None
+
+    @model_validator(mode='before')
+    @classmethod
+    def handle_validation_object(cls, data: Any) -> Any:
+        """Handle validation object in YAML and extract to direct fields"""
+        if isinstance(data, dict) and 'validation' in data:
+            validation = data.pop('validation')
+            if isinstance(validation, dict):
+                # Map validation.min/max to min_value/max_value
+                if 'min' in validation and 'min_value' not in data:
+                    data['min_value'] = validation['min']
+                if 'max' in validation and 'max_value' not in data:
+                    data['max_value'] = validation['max']
+                if 'min_value' in validation and 'min_value' not in data:
+                    data['min_value'] = validation['min_value']
+                if 'max_value' in validation and 'max_value' not in data:
+                    data['max_value'] = validation['max_value']
+                # Map other validation properties
+                if 'min_length' in validation and 'min_length' not in data:
+                    data['min_length'] = validation['min_length']
+                if 'max_length' in validation and 'max_length' not in data:
+                    data['max_length'] = validation['max_length']
+                if 'pattern' in validation and 'pattern' not in data:
+                    data['pattern'] = validation['pattern']
+        return data
+
+    @field_validator('options')
+    @classmethod
+    def validate_options(cls, v: Optional[Union[list, OptionsConfig]], info: ValidationInfo) -> Optional[Union[list, OptionsConfig]]:
+        """Validate options configuration"""
+        field_type = info.data.get('type')
+
+        # Select/multiselect/radio/autocomplete fields need options
+        if field_type in [FieldType.SELECT, FieldType.MULTISELECT, FieldType.RADIO, FieldType.AUTOCOMPLETE]:
+            if not v:
+                raise ValueError(f"{field_type.value} fields must have options configured")
+
+            # If it's a list (static options), validate for select/multiselect/radio only
+            if isinstance(v, list) and field_type == FieldType.AUTOCOMPLETE:
+                raise ValueError("Autocomplete fields must use dynamic options with data_source, not static options")
+
+        return v
+
+    @field_validator('search')
+    @classmethod
+    def validate_search(cls, v: Optional[SearchConfig], info: ValidationInfo) -> Optional[SearchConfig]:
+        """Validate search configuration"""
+        field_type = info.data.get('type')
+        options = info.data.get('options')
+
+        # Search only valid for autocomplete fields
+        if v:
+            if field_type != FieldType.AUTOCOMPLETE:
+                raise ValueError("search is only supported for autocomplete fields")
+            if v.min_length < 1:
+                raise ValueError("search.min_length must be at least 1")
+            if v.debounce_ms < 0:
+                raise ValueError("search.debounce_ms must be non-negative")
+
+        # Autocomplete fields should have search config
+        if field_type == FieldType.AUTOCOMPLETE and not v:
+            # Provide default search config
+            return SearchConfig()
+
+        return v
+
+    @field_validator('pattern')
+    def validate_pattern(cls, v):
+        if v:
+            try:
+                re.compile(v)
+            except re.error:
+                raise ValueError("Invalid regex pattern")
+        return v
+
+
+class ApproverDetails(BaseModel):
+    """Details for external/unregistered approvers"""
+    email: str
+    name: Optional[str] = None
+    position: Optional[str] = None
+    employee_type: Optional[str] = "external"  # internal, external, contractor
+
+    @field_validator('email')
+    @classmethod
+    def validate_email(cls, v):
+        """Validate email format (basic check or template variable)"""
+        if not v or not isinstance(v, str):
+            raise ValueError("Email is required and must be a string")
+        # Allow template variables like ${form.email}
+        if v.startswith('${') and v.endswith('}'):
+            return v
+        # Basic email validation
+        if '@' not in v:
+            raise ValueError("Invalid email format")
+        return v.lower()
+
+    @field_validator('employee_type')
+    @classmethod
+    def validate_employee_type(cls, v):
+        """Validate employee type"""
+        if v:
+            valid_types = ['internal', 'external', 'contractor']
+            if v not in valid_types:
+                raise ValueError(f"employee_type must be one of: {', '.join(valid_types)}")
+        return v
+
+
+class ApproverConfig(BaseModel):
+    """Configuration for individual approvers"""
+    approver: Optional[Union[str, ApproverDetails]] = None  # Email string or approver details object
+    dynamic_approver: Optional[str] = None  # Template like ${requestor.supervisor}
+    role: Optional[str] = None  # Role-based assignment
+    approval_type: ApprovalType = ApprovalType.NEEDS_TO_APPROVE
+    sla_hours: Optional[int] = None
+    can_edit_fields: Optional[list[str]] = None
+
+    @model_validator(mode='before')
+    @classmethod
+    def check_approver_fields(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            approver_fields = ['approver', 'dynamic_approver', 'role']
+            provided_fields = [field for field in approver_fields if data.get(field) is not None]
+            if len(provided_fields) != 1:
+                raise ValueError(f"Exactly one of {approver_fields} must be provided. Found: {provided_fields}")
+        return data
+
+
+# Removed Condition class - only string-based conditions are supported
+
+
+class ActionConfig(BaseModel):
+    """Configuration for workflow actions"""
+    continue_to: Optional[str] = None
+    end_workflow: Optional[bool] = None
+    notify_requestor: Optional[str] = None
+    email: Optional[bool] = None
+    slack: Optional[str] = None
+    webhook: Optional[str] = None
+    update_budget: Optional[str] = None
+    archive_request: Optional[bool] = None
+    generate_po_number: Optional[bool] = None
+    custom_actions: Optional[dict[str, Any]] = None
+
+
+class NotificationRecipient(BaseModel):
+    """Recipient configuration for notifications"""
+    email: Optional[str] = None  # Specific email or variable like ${instance.requester_email}
+    role: Optional[str] = None   # Role name like "finance_team"
+    user_id: Optional[int] = None  # Specific user ID
+
+
+class NotificationMessage(BaseModel):
+    """Message content for notifications"""
+    subject: str  # Subject line / notification title
+    body: str     # Message body content
+
+
+class NotificationConfig(BaseModel):
+    """Notification configuration"""
+    message: NotificationMessage  # The message to send (channel-agnostic)
+
+
+class ApiConfig(BaseModel):
+    """API configuration for automatic steps"""
+    connector: str  # Required: Connector name (e.g., "Claude AI", "ERP System")
+    action: str     # Required: Action name within connector
+    parameters: Optional[dict[str, Any]] = None  # Parameters for the API call
+    timeout: Optional[int] = None  # Timeout in seconds
+    save_to: Optional[str] = None  # Variable name to save the response
+
+
+class DataSourceParameterMapping(BaseModel):
+    """Parameter mapping for data source"""
+    name: str  # Parameter name
+    from_field: Optional[str] = None  # Map from form field (e.g., "field.department")
+    value: Optional[Any] = None  # Or provide a static value
+
+    @field_validator('from_field', 'value')
+    @classmethod
+    def validate_source(cls, v, info: ValidationInfo):
+        """Validate that either from_field or value is provided"""
+        # Allow both to be None temporarily, will be checked in model_validator
+        return v
+
+    @model_validator(mode='after')
+    def validate_has_source(self):
+        """Ensure either from_field or value is provided"""
+        if self.from_field is None and self.value is None:
+            raise ValueError(f"Parameter '{self.name}' must have either 'from_field' or 'value'")
+        if self.from_field is not None and self.value is not None:
+            raise ValueError(f"Parameter '{self.name}' cannot have both 'from_field' and 'value'")
+        return self
+
+
+class DataSourceConfig(BaseModel):
+    """Data source configuration for fetching external data in workflows"""
+    connector: str  # Required: Connector name (e.g., "my_database", "airtable_connector")
+    source: str     # Required: Data source name within connector
+    params: Optional[list[DataSourceParameterMapping]] = None  # Parameter mappings
+    save_to: str    # Required: Variable name to save the fetched data (e.g., "employees_json")
+    timeout: Optional[int] = None  # Timeout in seconds
+
+
+class WorkflowStep(BaseModel):
+    """Validation schema for workflow steps"""
+    name: str
+    type: StepType
+    description: Optional[str] = None
+
+    # Step-specific configurations
+    approvers: Optional[list[ApproverConfig]] = None
+    approver: Optional[Union[str, dict]] = None  # Single approver shorthand - email string or details object
+    approval_type: Optional[ApprovalType] = None
+
+    # Parallel approval specific
+    strategy: Optional[ParallelStrategy] = ParallelStrategy.ALL
+
+    # For conditional_split: list of condition choices
+    choices: Optional[list[dict]] = None
+    # Default action for conditional_split
+    default: Optional[dict] = None
+
+    # Section visibility controls (for layout sections)
+    view_sections: Optional[list[str]] = None  # Sections shown as readonly
+    edit_sections: Optional[list[str]] = None  # Sections shown as editable
+
+    # Notification-specific fields (for type: notification)
+    recipients: Optional[list[NotificationRecipient]] = None
+    notification: Optional[NotificationConfig] = None
+
+    # API configuration (for type: automatic)
+    api: Optional[ApiConfig] = None
+
+    # Data source configuration (for fetching external data)
+    data_source: Optional[DataSourceConfig] = None
+
+    # Actions
+    on_approve: Optional[ActionConfig] = None
+    on_reject: Optional[ActionConfig] = None
+    on_complete: Optional[ActionConfig] = None
+    on_timeout: Optional[ActionConfig] = None
+    on_failure: Optional[ActionConfig] = None  # For automatic steps
+
+    # Timing
+    timeout: Optional[str] = None  # e.g., "48_hours", "5_business_days"
+    sla_hours: Optional[int] = None
+
+    # Integration
+    webhook_url: Optional[str] = None
+    api_endpoint: Optional[str] = None
+
+    # Metadata (especially useful for end nodes to track outcome)
+    metadata: Optional[dict[str, Any]] = None
+
+    # Final notification before ending (for type: end nodes)
+    notify_requestor: Optional[str] = None
+
+    @field_validator('choices')
+    @classmethod
+    def validate_choices(cls, v):
+        """Validate choices for conditional_split"""
+        if v is not None:
+            if not isinstance(v, list):
+                raise ValueError("Choices must be a list")
+            for choice in v:
+                if not isinstance(choice, dict):
+                    raise ValueError("Each choice must be a dictionary")
+                if 'conditions' not in choice:
+                    raise ValueError("Each choice must have 'conditions'")
+                if 'continue_to' not in choice:
+                    raise ValueError("Each choice must have 'continue_to'")
+                if not isinstance(choice['conditions'], str) or not choice['conditions'].strip():
+                    raise ValueError("Choice conditions must be a non-empty string")
+        return v
+
+    @field_validator('timeout')
+    def validate_timeout(cls, v):
+        if v:
+            # Parse timeout formats like "48_hours", "5_business_days"
+            pattern = r'^\d+_(hours|business_days|days|minutes)$'
+            if not re.match(pattern, v):
+                raise ValueError("Invalid timeout format. Use format like '48_hours' or '5_business_days'")
+        return v
+
+    @model_validator(mode='after')
+    def validate_step_type_requirements(self):
+        """Validate that required fields are present based on step type"""
+        # Automatic steps must have api configuration
+        if self.type == StepType.AUTOMATIC:
+            if not self.api:
+                raise ValueError("Automatic steps must have 'api' configuration with connector and action")
+            if not self.api.connector or not self.api.action:
+                raise ValueError("Automatic steps must specify both 'connector' and 'action' in api config")
+
+        # Notification steps must have recipients and notification
+        if self.type == StepType.NOTIFICATION:
+            if not self.recipients:
+                raise ValueError("Notification steps must have 'recipients'")
+            if not self.notification:
+                raise ValueError("Notification steps must have 'notification' with message")
+
+        return self
+
+
+class Settings(BaseModel):
+    """Global workflow settings"""
+    timeout: Optional[dict[str, str]] = None
+    escalation: Optional[list[dict[str, str]]] = None
+    audit: Optional[dict[str, bool]] = None
+    notifications: Optional[dict[str, Any]] = None
+    sla_defaults: Optional[dict[str, int]] = None
+
+
+class Integrations(BaseModel):
+    """External system integrations"""
+    webhooks: Optional[dict[str, str]] = None
+    email_templates: Optional[dict[str, str]] = None
+    slack_channels: Optional[dict[str, str]] = None
+    api_endpoints: Optional[dict[str, str]] = None
+
+
+# ==========================================
+# TRIGGER CONFIGURATION (Scheduled Workflows)
+# ==========================================
+
+class TriggerType(str, Enum):
+    """Types of workflow triggers"""
+    CRON = "cron"
+    WEBHOOK = "webhook"
+    ONE_TIME = "one_time"
+
+
+class DataConditionConfig(BaseModel):
+    """Configuration for data-driven trigger conditions.
+
+    Fetches data from a data source and optionally compares it against
+    a saved resource baseline using deepdiff.
+    """
+    data_source_connector: Optional[str] = None              # Connector name (optional, resolved from source)
+    data_source_name: str                                   # Data source name (e.g., "GCP IAM Users")
+    compare_to_resource: Optional[str] = None               # Resource name for deepdiff comparison
+    params: Optional[list[dict[str, Any]]] = None           # Data source parameters
+    ignore_keys: Optional[list[str]] = None                 # Keys to ignore in deepdiff comparison
+
+
+class TriggerConfig(BaseModel):
+    """Individual trigger configuration within a workflow YAML.
+
+    Supports three trigger types:
+    - cron: Recurring schedule (requires 'schedule' field with cron expression)
+    - webhook: External HTTP POST trigger (webhook token auto-generated)
+    - one_time: Single execution at a scheduled time
+    """
+    type: TriggerType
+    schedule: Optional[str] = None                          # Cron expression (required for cron type)
+    max_runs: Optional[int] = None                          # Maximum number of executions (null = unlimited)
+    data_condition: Optional[DataConditionConfig] = None    # Optional data-driven condition
+    preset_form_data: Optional[dict[str, Any]] = None       # Auto-fill form fields by name match
+    requestor_email: Optional[str] = None                   # Employee email to act as requestor
+
+    @model_validator(mode='after')
+    def validate_trigger_type_requirements(self):
+        """Validate that required fields are present based on trigger type."""
+        if self.type == TriggerType.CRON and not self.schedule:
+            raise ValueError("Cron triggers must have a 'schedule' field with a valid cron expression")
+        if self.type == TriggerType.WEBHOOK and self.schedule:
+            raise ValueError("Webhook triggers should not have a 'schedule' field")
+        if self.type == TriggerType.ONE_TIME and not self.schedule:
+            raise ValueError("One-time triggers must have a 'schedule' field with a datetime or cron expression")
+        if self.max_runs is not None and self.max_runs < 1:
+            raise ValueError("max_runs must be at least 1")
+        return self
+
+
+class ApprovalProcess(BaseModel):
+    """Main ApprovalML workflow schema"""
+    name: str
+    description: Optional[str] = None
+    version: str = "1.0"
+
+    # Form definition - normalized to dict[str, FormField] after validation
+    form: dict[str, FormField]
+
+    # Form layout configuration (optional)
+    form_layout: Optional[FormLayout] = None
+
+    # Form footer configuration (optional)
+    form_footer: Optional[FormFooter] = None
+
+    # Workflow steps
+    workflow: dict[str, WorkflowStep]
+
+    # Optional configurations
+    settings: Optional[Settings] = None
+    integrations: Optional[Integrations] = None
+
+    # Scheduled workflow triggers (cron, webhook, one_time)
+    triggers: Optional[list[TriggerConfig]] = None
+
+    @model_validator(mode='before')
+    @classmethod
+    def normalize_form_format(cls, data):
+        """Convert new format with 'fields' array, layout, and footer to normalized format"""
+        if isinstance(data, dict) and 'form' in data:
+            form_data = data['form']
+            if isinstance(form_data, dict):
+                # Extract layout if present
+                if 'layout' in form_data:
+                    data['form_layout'] = form_data['layout']
+
+                # Extract footer if present
+                if 'footer' in form_data:
+                    data['form_footer'] = form_data['footer']
+
+                # Handle 'fields' array format
+                if 'fields' in form_data:
+                    # New format: { "fields": [ { "name": "field1", ... }, ... ] }
+                    fields_array = form_data['fields']
+                    if isinstance(fields_array, list):
+                        normalized_form = {}
+                        for field in fields_array:
+                            if isinstance(field, dict) and 'name' in field:
+                                field_name = field['name']
+                                field_copy = field.copy()
+                                del field_copy['name']  # Remove name from field definition
+                                normalized_form[field_name] = field_copy
+                        data['form'] = normalized_form
+        return data
+
+    @field_validator('workflow')
+    def validate_workflow_references(cls, v):
+        """Validate that workflow step references are valid"""
+        step_ids = set(v.keys())
+
+        for step_id, step in v.items():
+            # Check continue_to references in actions
+            for action_field in ['on_approve', 'on_reject', 'on_complete', 'on_timeout']:
+                action = getattr(step, action_field, None)
+                if action and action.continue_to:
+                    if action.continue_to not in step_ids:
+                        raise ValueError(f"Step '{step_id}' references unknown step '{action.continue_to}'")
+
+            # Check continue_to references in choices
+            if step.choices:
+                for choice in step.choices:
+                    if 'continue_to' in choice and choice['continue_to'] not in step_ids:
+                        raise ValueError(f"Step '{step_id}' choice references unknown step '{choice['continue_to']}'")
+
+            # Check continue_to references in default
+            if step.default and 'continue_to' in step.default:
+                default_target = step.default['continue_to']
+                if default_target not in step_ids:
+                    raise ValueError(f"Step '{step_id}' default references unknown step '{default_target}'")
+
+        return v
+
+    @model_validator(mode='after')
+    def validate_section_references(self):
+        """Validate that workflow step section references exist in layout"""
+        if self.form_layout and self.workflow:
+            section_ids = {section.id for section in self.form_layout.sections}
+
+            for step_id, step in self.workflow.items():
+                # Validate view_sections
+                if step.view_sections:
+                    for section_id in step.view_sections:
+                        if section_id not in section_ids:
+                            raise ValueError(
+                                f"Step '{step_id}' references unknown section '{section_id}' in view_sections. "
+                                f"Available sections: {', '.join(sorted(section_ids))}"
+                            )
+
+                # Validate edit_sections
+                if step.edit_sections:
+                    for section_id in step.edit_sections:
+                        if section_id not in section_ids:
+                            raise ValueError(
+                                f"Step '{step_id}' references unknown section '{section_id}' in edit_sections. "
+                                f"Available sections: {', '.join(sorted(section_ids))}"
+                            )
+
+        return self
+
+    @model_validator(mode='after')
+    def validate_layout_field_references(self):
+        """Validate that layout sections reference existing form fields"""
+        if self.form_layout:
+            form_field_names = set(self.form.keys())
+
+            for section in self.form_layout.sections:
+                # Flatten grid to get all field references
+                referenced_fields = set()
+                for row in section.grid:
+                    referenced_fields.update(row)
+
+                # Check if all referenced fields exist
+                for field_name in referenced_fields:
+                    if field_name not in form_field_names:
+                        raise ValueError(
+                            f"Section '{section.id}' references unknown field '{field_name}'. "
+                            f"Available fields: {', '.join(sorted(form_field_names))}"
+                        )
+
+        return self
+
+
+class ApprovalMLParser:
+    """Main parser class for ApprovalML YAML files"""
+
+    def __init__(self):
+        self.parsed_workflow: Optional[ApprovalProcess] = None
+        self.validation_errors: list[str] = []
+
+    def parse_yaml(self, yaml_content: str) -> Optional[ApprovalProcess]:
+        """Parse YAML content and validate against schema"""
+        try:
+            # Parse YAML
+            data = yaml.safe_load(yaml_content)
+
+            if not isinstance(data, dict):
+                raise ValueError("YAML must contain a dictionary at root level")
+
+            # Support both direct format and nested approval_process format
+            if 'approval_process' in data:
+                # Nested format with approval_process section
+                process_data = data['approval_process']
+            else:
+                # Direct format - YAML root is the process data
+                process_data = data
+
+            # Validate and parse using Pydantic
+            self.parsed_workflow = ApprovalProcess(**process_data)
+            self.validation_errors = []
+
+            return self.parsed_workflow
+
+        except yaml.YAMLError as e:
+            self.validation_errors = [f"YAML parsing error: {str(e)}"]
+            return None
+        except ValidationError as e:
+            self.validation_errors = [f"Validation error: {str(e)}"]
+            return None
+        except Exception as e:
+            self.validation_errors = [f"Unexpected error: {str(e)}"]
+            return None
+
+    def parse_file(self, file_path: str) -> Optional[ApprovalProcess]:
+        """Parse ApprovalML file from disk"""
+        try:
+            with open(file_path, encoding='utf-8') as file:
+                yaml_content = file.read()
+            return self.parse_yaml(yaml_content)
+        except FileNotFoundError:
+            self.validation_errors = [f"File not found: {file_path}"]
+            return None
+        except OSError as e:
+            self.validation_errors = [f"Error reading file: {str(e)}"]
+            return None
+
+    def validate_workflow_semantics(self) -> list[str]:
+        """Additional semantic validation beyond schema validation"""
+        if not self.parsed_workflow:
+            return ["No parsed workflow to validate"]
+
+        errors = []
+
+        # Check for unreachable steps
+        workflow = self.parsed_workflow.workflow
+
+        # Find entry points (steps with no incoming references)
+        referenced_steps = set()
+        for step in workflow.values():
+            for action_field in ['on_approve', 'on_reject', 'on_complete', 'on_timeout']:
+                action = getattr(step, action_field, None)
+                if action and action.continue_to:
+                    referenced_steps.add(action.continue_to)
+
+        entry_points = set(workflow.keys()) - referenced_steps
+        if not entry_points:
+            errors.append("No entry point found in workflow (all steps are referenced)")
+
+        # Check for cycles (basic detection)
+        # This is a simplified cycle detection - could be enhanced
+
+        # Validate form field references in choices format
+        form_fields = set(self.parsed_workflow.form.keys())
+        for step_id, step in workflow.items():
+            if step.choices:
+                import re
+                field_pattern = r'\b([a-zA-Z_][a-zA-Z0-9_]*)\b'
+                for choice in step.choices:
+                    if 'conditions' in choice:
+                        potential_fields = re.findall(field_pattern, choice['conditions'])
+                        for field in potential_fields:
+                            # Skip common operators and keywords
+                            keywords = ['and', 'or', 'not', 'in', 'true', 'false', 'True', 'False']
+                            if field not in keywords and field not in form_fields:
+                                # This is a warning rather than an error since string conditions are more flexible
+                                pass  # Could add warnings here if needed
+
+        return errors
+
+
+    def extract_variables(self) -> list[str]:
+        """Extract all template variables used in the workflow"""
+        if not self.parsed_workflow:
+            return []
+
+        variables = set()
+        variable_pattern = r'\$\{([^}]+)\}'
+
+        # Convert workflow to string and extract variables
+        workflow_str = str(self.parsed_workflow.model_dump())
+        matches = re.findall(variable_pattern, workflow_str)
+        variables.update(matches)
+
+        return list(variables)
+
+    def get_validation_summary(self) -> dict[str, Any]:
+        """Get comprehensive validation summary"""
+        semantic_errors = self.validate_workflow_semantics() if self.parsed_workflow else []
+
+        return {
+            "is_valid": len(self.validation_errors) == 0 and len(semantic_errors) == 0,
+            "schema_errors": self.validation_errors,
+            "semantic_errors": semantic_errors,
+            "workflow_name": self.parsed_workflow.name if self.parsed_workflow else None,
+            "step_count": len(self.parsed_workflow.workflow) if self.parsed_workflow else 0,
+            "form_field_count": len(self.parsed_workflow.form) if self.parsed_workflow else 0,
+            "template_variables": self.extract_variables(),
+        }
+
+
+def parse_approvalml(yaml_content: str) -> tuple[Optional[ApprovalProcess], dict[str, Any]]:
+    """Convenience function to parse ApprovalML and return validation summary"""
+    parser = ApprovalMLParser()
+    workflow = parser.parse_yaml(yaml_content)
+    validation_summary = parser.get_validation_summary()
+
+    return workflow, validation_summary
+
+
+def parse_approvalml_file(file_path: str) -> tuple[Optional[ApprovalProcess], dict[str, Any]]:
+    """Convenience function to parse ApprovalML file and return validation summary"""
+    parser = ApprovalMLParser()
+    workflow = parser.parse_file(file_path)
+    validation_summary = parser.get_validation_summary()
+
+    return workflow, validation_summary
