@@ -1,12 +1,61 @@
-"""
-ApprovalML YAML Syntax Reference for AI Workflow Generation
+# ApprovalML — AI Prompt Guide
 
-This module contains the complete syntax reference for ApprovalML workflows,
-designed to be used by AI engines (like Google Gemini) to generate valid
-YAML workflow definitions from natural language descriptions.
-"""
+Use this file as a system prompt or knowledge base when generating ApprovalML workflows with any AI assistant (ChatGPT, Claude, Gemini, etc.).
 
-APPROVALML_SYNTAX_REFERENCE = """
+## How to use this file
+
+### ChatGPT / Claude / Gemini (paste method)
+1. Copy the entire contents of this file
+2. Paste it at the start of your conversation as context
+3. Then describe the workflow you want in plain English
+
+**Example prompt after pasting:**
+> "Create a travel expense approval workflow for amounts over $500 that requires manager approval, then finance approval. Include fields for destination, travel dates, estimated cost, and purpose."
+
+### ChatGPT Custom GPT
+1. Go to ChatGPT → Explore GPTs → Create
+2. In the **Instructions** field, paste the system prompt section below
+3. Upload this file as a **Knowledge** file
+4. Name it something like "ApprovalML Workflow Builder"
+
+### Gemini Gem
+1. Go to Gemini → Gems → New Gem
+2. Paste the system prompt section in the **Instructions** field
+3. Upload this file as context
+
+### Claude Project
+1. Create a new Project in Claude.ai
+2. Add this file to the **Project Knowledge**
+3. The syntax is always available in every conversation in that project
+
+---
+
+## System Prompt (use this in Custom GPT / Gem instructions)
+
+```
+You are an ApprovalML workflow expert. You help users create valid YAML workflow
+files for the ApprovalML approval workflow system.
+
+When a user describes a workflow:
+1. Generate a complete, valid ApprovalML YAML file
+2. Include all required form fields based on the use case
+3. Use appropriate step types: decision, parallel_approval, conditional_split, notification, end
+4. Add realistic conditional routing where appropriate
+5. Always validate your output against the syntax rules in your knowledge base
+
+Critical rules:
+- workflow: must be a dict with step names as keys, NEVER a list
+- Use type: decision, NOT type: approval (deprecated)
+- notification steps use notification.message.subject and notification.message.body
+- Every workflow must end with a step of type: end
+- Dynamic approvers: use ${requestor.manager}, ${requestor.supervisor}, ${requestor.head_of_department}
+- Conditions in conditional_split use plain expressions like: amount > 1000, leave_type == 'unpaid'
+
+Always output the complete YAML file, not just a partial snippet.
+```
+
+---
+
 # ApprovalML YAML Syntax Reference for AI Workflow Generation
 
 ## Overview
@@ -29,21 +78,15 @@ submission_criteria:
 
 # Form definition
 form:
-  # Optional page-repeating header zone (field names referenced from fields[])
-  header:
-    grid: []  # e.g. [["company_name", "invoice_no"], ["company_address"]]
-
-  # Optional layout configuration for sectioned form body
+  # Optional layout configuration for sectioned forms
   layout:
     sections: []  # Section structure (references field names)
     responsive: {}
 
-  # Optional footer — either legacy item-based or field-zone grid
+  # Optional footer configuration for reference data and metadata
   footer:
-    grid: []  # Field-zone style: [["footer_note", "page_no"]]
-    # OR legacy item-based:
-    # columns: {}
-    # items: []
+    columns: {}
+    items: []
 
   # Form fields (defined separately from layout)
   fields: []  # Array of field definitions
@@ -91,18 +134,6 @@ settings:
 - `line_items` - Dynamic table with repeating rows
 - `autocomplete` - Search-as-you-type field with data source integration
 - `autonumber` - Auto-incrementing sequential number (e.g. EXP-00042). Read-only; generated at submission. Supports `prefix` and `pad_length`.
-
-### Additional Field Display Properties
-```yaml
-- name: "field_name"
-  type: "text"
-  label: "Display Label"
-  show_label: false   # If false, hides the label caption (useful in header/footer zones)
-  align: "right"      # Column text alignment: "left" | "center" | "right"
-  width: "120px"      # Column width (CSS value: "120px", "15%", "auto")
-```
-`align` and `width` are most useful on `item_fields` inside `line_items` to control column layout.
-`show_label: false` suppresses the label so only the field value appears — common in invoice headers.
 
 ### Field Properties
 ```yaml
@@ -618,80 +649,6 @@ Common CSS properties supported in `style`:
 4. **Compliance Info**: Show regulatory references or policies
 5. **Contact Info**: Display help desk or support information
 
-## Form Header and Field-Zone Footer (Invoice / Document Style)
-
-For document-style forms (invoices, purchase orders, delivery notes) that must match a printed
-layout, use `form.header` and a grid-based `form.footer` that reference fields by name.
-
-These zones **repeat on every printed page** (unlike the body layout which appears once).
-Place signature fields and totals in the body layout — not in header/footer.
-
-### Header / Field-Zone Footer Structure
-
-```yaml
-form:
-  # Page-repeating header zone — grid of field names
-  header:
-    grid:
-      - ["company_name", "invoice_no"]   # Row 1: two columns
-      - ["company_address"]              # Row 2: full-width
-
-  # Page-repeating footer zone — same grid syntax
-  footer:
-    grid:
-      - ["footer_note", "page_number"]
-
-  fields:
-    # Header fields — use show_label: false to display only the value
-    - name: "company_name"
-      type: "text"
-      label: "Company"
-      show_label: false   # Suppress label in the header zone
-      readonly: true
-
-    - name: "invoice_no"
-      type: "autonumber"
-      label: "Invoice No."
-      prefix: "SL_INV_"
-      pad_length: 4
-
-    - name: "company_address"
-      type: "textarea"
-      label: "Address"
-      show_label: false
-      readonly: true
-
-    - name: "footer_note"
-      type: "text"
-      label: "Note"
-      show_label: false
-
-    - name: "page_number"
-      type: "hidden"   # Populated by the PDF renderer at print time
-      label: "Page"
-```
-
-### How Dynamic Values Reach the Header/Footer
-
-Fields in the header zone are regular form fields. Their values come from:
-
-1. **Automatic step with `field_mapping`** — an early workflow step (type: `automatic`) reads the
-   webhook payload (e.g., from Odoo) and maps values into form fields using JSONPath:
-   ```yaml
-   fetch_invoice_data:
-     type: "automatic"
-     field_mapping:
-       company_name: "$.company.name"
-       company_address: "$.company.address"
-       invoice_no: "$.invoice.number"
-       invoice_date: "$.invoice.date"
-       line_items: "$.invoice.lines"
-     on_complete:
-       continue_to: "finance_approval"
-   ```
-2. **Pre-filled form data** from triggers (`preset_form_data`).
-3. **User input** on the initial submission form.
-
 ## Workflow Step Types
 
 **IMPORTANT:** The workflow must be a dictionary/object where step names are keys, NOT a list/array format.
@@ -899,34 +856,6 @@ update_resource:
 **Test Mode Behavior:**
 - `data_source` (read): Executes normally - data is fetched and compared
 - `resource` (write): Logs the action in history but does NOT modify the resource
-
-#### 4c. Field Mapping (Populate Form Fields from Webhook Payload)
-Map values from a webhook payload (e.g., from Odoo or an ERP system) directly into form fields
-using JSONPath expressions. This is typically the first step after a webhook trigger.
-
-```yaml
-fetch_invoice_data:
-  name: "Populate Invoice Fields"
-  type: "automatic"
-  field_mapping:
-    company_name: "$.company.name"
-    company_address: "$.company.street"
-    invoice_no: "$.invoice.name"
-    invoice_date: "$.invoice.invoice_date"
-    due_date: "$.invoice.invoice_date_due"
-    customer_name: "$.invoice.partner_id.name"
-    subtotal: "$.invoice.amount_untaxed"
-    tax_amount: "$.invoice.amount_tax"
-    total_amount: "$.invoice.amount_total"
-  on_complete:
-    continue_to: "finance_approval"
-```
-
-**`field_mapping` Properties:**
-- Keys are form field names (must exist in `form.fields`)
-- Values are JSONPath expressions evaluated against the incoming `request_data` / webhook payload
-- Missing paths silently leave the target field unchanged
-- Can be combined with `data_source` or `resource` on the same step
 
 **Important:** `type: automatic` should ONLY be used for data operations. For sending notifications, use `type: notification` instead.
 
@@ -1271,196 +1200,4 @@ complex_routing:
       continue_to: "expedited_approval"
 ```
 
-## Test Data (Optional)
-
-The `test_data` section pre-fills the submission form when a workflow is run in **test mode** inside
-the Workflow Designer. It is ignored completely in production.
-
-```yaml
-test_data:
-  invoice_no: "SL/INV/2026/0425"
-  invoice_date: "2026-03-09"
-  customer_name: "PT. UNGGUL PLASTIK"
-  total_amount: 27940000
-  invoice_lines:
-    - item_name: "Widget A"
-      qty: 100
-      unit_price: 50000
-      amount: 5000000
-```
-
-**Rules:**
-- Keys must match field names defined in `form.fields`
-- Values can be any YAML scalar (string, number, boolean) or a list of dicts for `line_items` fields
-- The section is silently ignored when submitting real workflow requests
-
 This syntax reference should enable AI engines to generate valid ApprovalML workflows from natural language descriptions while ensuring proper validation against available employee roles.
-"""
-
-# Field type definitions for validation
-FIELD_TYPES = {
-    "text": {"validation": ["min_length", "max_length", "pattern"]},
-    "textarea": {"validation": ["min_length", "max_length", "rows"]},
-    "email": {"validation": ["required", "pattern"]},
-    "number": {"validation": ["min_value", "max_value", "step"]},
-    "currency": {"validation": ["min", "max", "min_value", "max_value"], "optional_props": ["currency"]},
-    "date": {"validation": ["min_date", "max_date"]},
-    "dropdown": {
-        "validation": ["required"],
-        "optional_props": ["options", "data_source", "lookup"],
-        "requires_one_of": ["options", "data_source"],
-        "description": "Dropdown select field (alias for 'select' - more intuitive naming)"
-    },
-    "select": {
-        "validation": ["required"],
-        "optional_props": ["options", "data_source", "lookup"],
-        "requires_one_of": ["options", "data_source"]  # Must have either static options or data_source
-    },
-    "multiselect": {"required_props": ["options"], "validation": ["min_selections", "max_selections"]},
-    "checkbox": {"validation": ["required"]},
-    "radio": {"required_props": ["options"], "validation": ["required"], "optional_props": ["display_as"]},
-    "file_upload": {"validation": ["accept", "multiple", "max_size", "max_files"], "optional_props": ["capture"]},
-    "signature": {"validation": ["required"], "optional_props": ["initial", "label"]},
-    "richtext": {
-        "validation": ["required"],
-        "description": "Rich text editor (WYSIWYG) that supports HTML formatting and embedded images. Images are automatically converted to base64 and embedded in the HTML content. Content is saved to S3/local storage at companies/{company_id}/workflows/{workflow_id}/instances/{instance_id}/richtext/{field_name}.html"
-    },
-    "line_items": {"required_props": ["item_fields"], "validation": ["min_items", "max_items"]},
-    "autocomplete": {
-        "required_props": ["options"],  # Changed: now requires options instead of data_source
-        "validation": ["required"],
-        "optional_props": ["search", "placeholder"],
-        "search_props": ["min_length", "debounce_ms", "max_results"],
-        "data_source_props": ["source_id", "params", "object_path", "value_field", "label_field", "display"],
-        "value_type": "dynamic",  # Can be string (ID) or object depending on configuration
-        "value_type_rules": {
-            # If value_field is NOT set in options.data_source, stores entire object
-            # If value_field is set, stores only that field value
-            "object": ["no_value_field"],
-            "primitive": ["value_field"]
-        }
-    },
-    "autonumber": {
-        "validation": [],
-        "optional_props": ["prefix", "pad_length", "start_value"],
-        "description": (
-            "Auto-incrementing sequential number field. The value is generated server-side at submission "
-            "time and is read-only for users. Sequence is scoped per workflow + field name. "
-            "Use 'prefix' for a text prefix (e.g. 'EXP-'), 'pad_length' for zero-padding (e.g. 5 → '00042'), "
-            "and 'start_value' to set the first number in the sequence (defaults to 1)."
-        ),
-        "yaml_example": (
-            "- name: form_no\n"
-            "  type: autonumber\n"
-            "  label: Form No.\n"
-            "  prefix: \"EXP-\"\n"
-            "  pad_length: 5\n"
-            "  start_value: 1\n"
-            "  # Generates: EXP-00001, EXP-00002, ..."
-        )
-    }
-}
-
-# Step type definitions
-STEP_TYPES = {
-    "decision": {
-        "required_props": ["approver"],
-        "optional_props": ["approval_type", "signature_field", "on_approve", "on_reject", "timeout", "view_sections", "edit_sections"]
-    },
-    "parallel_approval": {
-        "required_props": ["approvers", "approval_strategy"],
-        "optional_props": ["signature_field", "on_approve", "on_reject", "timeout", "view_sections", "edit_sections"]
-    },
-    "conditional_split": {
-        "required_props": ["choices"],
-        "optional_props": ["default", "view_sections", "edit_sections"]
-    },
-    "automatic": {
-        "required_props": ["on_complete"],
-        "optional_props": ["api", "data_source", "resource", "field_mapping", "on_failure"],
-        "requires_one_of": ["api", "data_source", "resource", "field_mapping"],
-        "field_mapping_description": (
-            "Maps values from the incoming webhook payload or instance request_data to form fields. "
-            "Keys are form field names; values are JSONPath expressions evaluated against the payload. "
-            "e.g. { invoice_no: '$.invoice.number', total: '$.invoice.total_amount' }"
-        ),
-        "data_source_props": {
-            "required": ["source_id", "save_to"],
-            "optional": ["compare_to_resource", "save_diff_to", "ignore_keys"]
-        },
-        "resource_props": {
-            "required": ["data_from", "resource_name"]
-        }
-    },
-    "notification": {
-        "required_props": ["recipients", "notification", "on_complete"],
-        "optional_props": []
-    },
-    "end": {
-        "required_props": [],
-        "optional_props": ["metadata", "notify_requestor"]
-    }
-}
-
-# Approval types
-APPROVAL_TYPES = [
-    "needs_to_approve",
-    "needs_to_sign",
-    "needs_to_recommend",
-    "needs_to_acknowledge",
-    "needs_to_call_action",
-    "receives_a_copy"
-]
-
-# Dynamic role references
-DYNAMIC_ROLES = [
-    "${requestor.manager}",
-    "${requestor.supervisor}",
-    "${requestor.department_head}",
-    "${requestor.head_of_department}"
-]
-
-def get_syntax_reference() -> str:
-    """
-    Get the complete ApprovalML syntax reference for AI generation.
-
-    Returns:
-        str: The complete syntax reference text
-    """
-    return APPROVALML_SYNTAX_REFERENCE
-
-def get_field_types() -> dict:
-    """
-    Get the supported field types and their properties.
-
-    Returns:
-        dict: Field type definitions
-    """
-    return FIELD_TYPES
-
-def get_step_types() -> dict:
-    """
-    Get the supported step types and their properties.
-
-    Returns:
-        dict: Step type definitions
-    """
-    return STEP_TYPES
-
-def get_approval_types() -> list:
-    """
-    Get the supported approval types.
-
-    Returns:
-        list: List of approval type strings
-    """
-    return APPROVAL_TYPES
-
-def get_dynamic_roles() -> list:
-    """
-    Get the supported dynamic role references.
-
-    Returns:
-        list: List of dynamic role reference strings
-    """
-    return DYNAMIC_ROLES

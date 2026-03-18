@@ -2,6 +2,8 @@
 
 YAML-based approval workflow parser and validator.
 
+> **New to ApprovalML?** Use [`PROMPT.md`](./PROMPT.md) with any AI assistant to generate workflows from plain English — no need to learn the syntax first.
+
 ## Install
 
 ```bash
@@ -84,6 +86,36 @@ workflow:
     type: "end"
     notify_requestor: "Leave request approved"
 ```
+
+## Generate Workflows with AI
+
+The fastest way to create a workflow is to describe it in plain English using any AI assistant.
+
+### Quick start (any AI)
+
+1. Open [`PROMPT.md`](./PROMPT.md) and copy the full contents
+2. Paste it at the start of a new ChatGPT, Claude, or Gemini conversation
+3. Describe your workflow:
+
+> *"Create a 3-level purchase approval workflow. Amounts under $1,000 go to the department manager only. Amounts over $1,000 require the department manager then finance director. Include fields for item description, amount, supplier, and justification."*
+
+4. Copy the generated YAML, save it, and validate:
+
+```bash
+approvalml validate my-workflow.yaml
+```
+
+### Custom AI assistants
+
+For a persistent assistant that always knows the ApprovalML syntax without pasting:
+
+| Platform | How |
+|----------|-----|
+| **ChatGPT Custom GPT** | Instructions → paste system prompt from `PROMPT.md` · Knowledge → upload `PROMPT.md` |
+| **Gemini Gem** | Instructions → paste system prompt from `PROMPT.md` · upload `PROMPT.md` as context |
+| **Claude Project** | Add `PROMPT.md` to Project Knowledge — available in every conversation |
+
+---
 
 ## Example Templates
 

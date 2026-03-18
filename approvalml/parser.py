@@ -29,6 +29,7 @@ class FieldType(str, Enum):
     LINE_ITEMS = "line_items"
     AUTOCOMPLETE = "autocomplete"  # Search-as-you-type with data source
     AUTONUMBER = "autonumber"  # Auto-incrementing sequential number with optional prefix/padding
+    IMAGE = "image"  # Display-only image; value is a URL or resolved from company media asset gallery
 
 
 class StepType(str, Enum):
@@ -61,23 +62,35 @@ class ResponsiveLayout(BaseModel):
 
 
 class FormSection(BaseModel):
-    """Layout section for organizing form fields"""
+    """Layout section for organizing form fields.
+
+    Two layout modes:
+    - grid: row-aligned grid — each inner list is a row of field names displayed side-by-side.
+            Fields across rows are locked to the same column widths.
+    - columns: independent column stacks — each inner list is a vertical stack of field names.
+               Columns grow independently; no cross-row alignment. Better for mixed-height fields
+               (e.g. a textarea next to a group of short text inputs).
+    Exactly one of grid or columns must be specified.
+    """
     id: str
     title: str
     description: Optional[str] = None
     initial: bool = False  # Whether this section is shown on initial submission
-    grid: list[list[str]]  # Grid layout: rows with field names
+    grid: Optional[list[list[str]]] = None       # Row-aligned grid layout
+    columns: Optional[list[list[str]]] = None    # Independent column-stack layout
+    column_widths: Optional[list[str]] = None    # CSS flex widths per column e.g. ["2fr","1fr"] or ["60%","40%"]
+                                                 # Length must match columns list; ignored when using grid
 
-    @field_validator('grid')
-    @classmethod
-    def validate_grid(cls, v):
-        """Validate grid structure"""
-        if not v or len(v) == 0:
-            raise ValueError("Grid must contain at least one row")
-        for row in v:
-            if not isinstance(row, list):
-                raise ValueError("Each grid row must be a list")
-        return v
+    @model_validator(mode='after')
+    def validate_layout_mode(self) -> 'FormSection':
+        """Exactly one of grid or columns must be present."""
+        has_grid = self.grid is not None
+        has_columns = self.columns is not None
+        if not has_grid and not has_columns:
+            raise ValueError(f"Section '{self.id}' must define either 'grid' or 'columns'")
+        if has_grid and has_columns:
+            raise ValueError(f"Section '{self.id}' cannot define both 'grid' and 'columns' — choose one")
+        return self
 
 
 class FormLayout(BaseModel):
@@ -246,6 +259,69 @@ class FormField(BaseModel):
     prefix: Optional[str] = None        # e.g. "EXP-", "PO-", "INV-"
     pad_length: Optional[int] = None    # zero-pad the number to this width (e.g. 5 → "00042")
     start_value: Optional[int] = None   # first number in the sequence (default 1)
+
+    # Display control
+    show_label: Optional[bool] = None   # If False, suppress the label caption (useful in header/footer zones)
+    display: Optional[str] = None       # "inline" → label: value on one line; default is block (label above value)
+    value_align: Optional[str] = None   # For display:"inline" only — aligns the VALUE text ("left"|"right"|"center")
+                                        # Label is always left-aligned; value defaults to "right"
+
+    # Column layout (for line_items item_fields and header/footer grid cells)
+    align: Optional[str] = None         # "left" | "center" | "right" — aligns cell content in line_items columns
+                                        # and block-mode read-only field values
+    width: Optional[str] = None         # CSS width e.g. "120px", "15%"
+    height: Optional[str] = None        # CSS height e.g. "60px", "20%" — primarily for image fields
+    sum: Optional[bool] = None          # If True, show column sum in the footer row (read-only mode)
+    text_style: Optional[list[str]] = None  # Text styling applied to the value in read-only display.
+
+    # Image field configuration (type: image)
+    source: Optional[str] = None        # Asset name from settings.media.assets — e.g. "company_logo"
+                                        # If omitted the field value is used as the image URL directly
+    placement: Optional[str] = None     # How the image is placed: "inline" (default) | "background" | "cover"
+    object_fit: Optional[str] = None    # CSS object-fit: "cover" | "contain" (default) | "fill" | "scale-down" | "none"
+    position: Optional[str] = None      # Horizontal alignment: "left" (default) | "center" | "right"
+
+    @field_validator('text_style')
+    @classmethod
+    def validate_text_style(cls, v):
+        if v is None:
+            return v
+        valid = {"bold", "italic", "underline", "strikethrough"}
+        invalid = [s for s in v if s not in valid]
+        if invalid:
+            raise ValueError(f"Invalid text_style values: {invalid}. Valid: {sorted(valid)}")
+        return v
+
+    @field_validator('placement')
+    @classmethod
+    def validate_placement(cls, v, info):
+        if v is None:
+            return v
+        if info.data.get('type') != FieldType.IMAGE:
+            raise ValueError("placement is only valid for image fields")
+        valid = {"inline", "background", "cover"}
+        if v not in valid:
+            raise ValueError(f"placement must be one of: {sorted(valid)}")
+        return v
+
+    @field_validator('object_fit')
+    @classmethod
+    def validate_object_fit(cls, v, info):
+        if v is None:
+            return v
+        if info.data.get('type') != FieldType.IMAGE:
+            raise ValueError("object_fit is only valid for image fields")
+        valid = {"cover", "contain", "fill", "scale-down", "none"}
+        if v not in valid:
+            raise ValueError(f"object_fit must be one of: {sorted(valid)}")
+        return v
+
+    @field_validator('source')
+    @classmethod
+    def validate_source(cls, v, info):
+        if v is not None and info.data.get('type') != FieldType.IMAGE:
+            raise ValueError("source is only valid for image fields")
+        return v
 
     @field_validator('item_fields')
     @classmethod
@@ -515,7 +591,11 @@ class WorkflowStep(BaseModel):
 
     # Section visibility controls (for layout sections)
     view_sections: Optional[list[str]] = None  # Sections shown as readonly
-    edit_sections: Optional[list[str]] = None  # Sections shown as editable
+    edit_sections: Optional[list[str]] = None  # Sections shown as fully editable
+    # mixed_sections: sections shown with only specific fields editable; everything else readonly.
+    # Keys are section IDs; values have an "editable" list of field names.
+    # Example:  mixed_sections: { totals_section: { editable: [disc_total, u_muka] } }
+    mixed_sections: Optional[dict[str, dict]] = None
 
     # Notification-specific fields (for type: notification)
     recipients: Optional[list[NotificationRecipient]] = None
@@ -548,6 +628,17 @@ class WorkflowStep(BaseModel):
     # Final notification before ending (for type: end nodes)
     notify_requestor: Optional[str] = None
 
+    # Digital signature requirement (for type: decision steps)
+    # Value is the name of a form field with type: signature that must be filled
+    # before the approver's action is accepted.
+    signature_field: Optional[str] = None
+
+    # Field mapping for automatic steps that receive a webhook payload.
+    # Keys are form field names; values are JSONPath expressions evaluated
+    # against the step's incoming payload / request_data.
+    # e.g.  field_mapping: { invoice_no: "$.invoice.number", total: "$.invoice.total" }
+    field_mapping: Optional[dict[str, str]] = None
+
     @field_validator('choices')
     @classmethod
     def validate_choices(cls, v):
@@ -578,11 +669,14 @@ class WorkflowStep(BaseModel):
     @model_validator(mode='after')
     def validate_step_type_requirements(self):
         """Validate that required fields are present based on step type"""
-        # Automatic steps must have api configuration
+        # Automatic steps must have either api configuration or field_mapping
         if self.type == StepType.AUTOMATIC:
-            if not self.api:
-                raise ValueError("Automatic steps must have 'api' configuration with connector and action")
-            if not self.api.connector or not self.api.action:
+            if not self.api and not self.field_mapping:
+                raise ValueError(
+                    "Automatic steps must have either 'api' configuration (connector + action) "
+                    "or 'field_mapping' to populate form fields from the incoming payload"
+                )
+            if self.api and (not self.api.connector or not self.api.action):
                 raise ValueError("Automatic steps must specify both 'connector' and 'action' in api config")
 
         # Notification steps must have recipients and notification
@@ -610,6 +704,26 @@ class Integrations(BaseModel):
     email_templates: Optional[dict[str, str]] = None
     slack_channels: Optional[dict[str, str]] = None
     api_endpoints: Optional[dict[str, str]] = None
+
+
+class FieldZone(BaseModel):
+    """A page-repeating print zone (header or footer) defined via a field grid.
+
+    Fields listed in the grid are resolved from ``form.fields[]`` by name.
+    Each inner list is a row; each element in that row is a field name.
+    """
+    grid: list[list[str]]   # Rows of field names e.g. [["company_name", "invoice_no"], ["address"]]
+    title: Optional[str] = None  # Optional zone title (not rendered in PDF, used for tooling)
+
+    @field_validator('grid')
+    @classmethod
+    def validate_grid(cls, v):
+        if not v:
+            raise ValueError("FieldZone grid must contain at least one row")
+        for row in v:
+            if not isinstance(row, list):
+                raise ValueError("Each grid row must be a list of field names")
+        return v
 
 
 # ==========================================
@@ -677,8 +791,12 @@ class ApprovalProcess(BaseModel):
     # Form layout configuration (optional)
     form_layout: Optional[FormLayout] = None
 
+    # Form header zone (page-repeating, field-grid based)
+    form_header: Optional[FieldZone] = None
+
     # Form footer configuration (optional)
-    form_footer: Optional[FormFooter] = None
+    # Accepts either the legacy item-based FormFooter or the new FieldZone grid model.
+    form_footer: Optional[Union[FormFooter, FieldZone]] = None
 
     # Workflow steps
     workflow: dict[str, WorkflowStep]
@@ -690,6 +808,11 @@ class ApprovalProcess(BaseModel):
     # Scheduled workflow triggers (cron, webhook, one_time)
     triggers: Optional[list[TriggerConfig]] = None
 
+    # Test data: pre-filled field values used by the designer's test mode.
+    # These are NOT used in production; they only pre-populate the test submission form
+    # so testers don't have to fill in every field manually.
+    test_data: Optional[dict[str, Any]] = None
+
     @model_validator(mode='before')
     @classmethod
     def normalize_form_format(cls, data):
@@ -700,6 +823,10 @@ class ApprovalProcess(BaseModel):
                 # Extract layout if present
                 if 'layout' in form_data:
                     data['form_layout'] = form_data['layout']
+
+                # Extract header if present (new FieldZone-based header)
+                if 'header' in form_data:
+                    data['form_header'] = form_data['header']
 
                 # Extract footer if present
                 if 'footer' in form_data:
@@ -769,6 +896,15 @@ class ApprovalProcess(BaseModel):
                         if section_id not in section_ids:
                             raise ValueError(
                                 f"Step '{step_id}' references unknown section '{section_id}' in edit_sections. "
+                                f"Available sections: {', '.join(sorted(section_ids))}"
+                            )
+
+                # Validate mixed_sections
+                if step.mixed_sections:
+                    for section_id in step.mixed_sections:
+                        if section_id not in section_ids:
+                            raise ValueError(
+                                f"Step '{step_id}' references unknown section '{section_id}' in mixed_sections. "
                                 f"Available sections: {', '.join(sorted(section_ids))}"
                             )
 
