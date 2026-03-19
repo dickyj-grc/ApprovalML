@@ -1358,6 +1358,26 @@ FIELD_TYPES = {
             "  start_value: 1\n"
             "  # Generates: EXP-00001, EXP-00002, ..."
         )
+    },
+    "image": {
+        "validation": [],
+        "optional_props": ["source", "placement", "object_fit", "position", "height", "width", "show_label"],
+        "description": (
+            "Display-only image field. Resolves from the company Media Gallery by asset name "
+            "(source: <name>) or uses the field value as a direct URL. "
+            "placement: inline (default) | background | cover. "
+            "object_fit: contain (default) | cover | fill | scale-down | none."
+        ),
+        "yaml_example": (
+            "- name: company_logo\n"
+            "  type: image\n"
+            "  label: \"\"\n"
+            "  source: company_logo   # resolved from Media Gallery by name\n"
+            "  placement: inline\n"
+            "  position: left\n"
+            "  height: \"64px\"\n"
+            "  show_label: false"
+        )
     }
 }
 
