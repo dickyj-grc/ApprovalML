@@ -1294,6 +1294,41 @@ test_data:
 - Values can be any YAML scalar (string, number, boolean) or a list of dicts for `line_items` fields
 - The section is silently ignored when submitting real workflow requests
 
+## Print Settings (Optional)
+
+The `print` section controls how the workflow document is rendered as a PDF.
+
+```yaml
+print:
+  orientation: portrait         # portrait (default) | landscape
+  page_size: A4                 # A4 (default) | Letter | Legal
+  suppress_auto_header: true    # true (default) — if form.header exists, skip the auto company+title block
+  show_history: true            # true (default) — render the Approval History table at the end
+```
+
+**Field Descriptions:**
+
+| Field | Default | Description |
+|---|---|---|
+| `orientation` | `portrait` | Page orientation for PDF output |
+| `page_size` | `A4` | Paper size — A4, Letter, or Legal |
+| `suppress_auto_header` | `true` | When `true` and the workflow has a `form.header`, the system title block (company name + workflow title) is omitted to avoid duplication with the custom header |
+| `show_history` | `true` | When `false`, the Approval History / chronology table is not included in the PDF |
+
+**Print-only fields:**
+
+Individual fields can be marked `print_only: true` to make them appear in the PDF but not in the web form. This is useful for centered document titles or print-specific annotations:
+
+```yaml
+fields:
+  - name: doc_title
+    type: text
+    default_value: "PURCHASE ORDER"
+    text_style: [bold]
+    value_align: center
+    print_only: true       # visible in PDF only — hidden in the submission/approval form
+```
+
 This syntax reference should enable AI engines to generate valid ApprovalML workflows from natural language descriptions while ensuring proper validation against available employee roles.
 """
 

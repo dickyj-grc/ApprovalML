@@ -228,6 +228,7 @@ class FormField(BaseModel):
 
     # Calculated field support
     readonly: Optional[bool] = None
+    print_only: Optional[bool] = None   # If True, field is shown in PDF only; hidden in the web form
     calculated: Optional[bool] = None
     formula: Optional[str] = None
 
@@ -689,6 +690,27 @@ class WorkflowStep(BaseModel):
         return self
 
 
+class PageOrientation(str, Enum):
+    PORTRAIT = "portrait"
+    LANDSCAPE = "landscape"
+
+
+class PrintConfig(BaseModel):
+    """PDF/print settings for this workflow document."""
+    orientation: PageOrientation = PageOrientation.PORTRAIT
+    page_size: str = "A4"                  # A4 | Letter | Legal
+    suppress_auto_header: bool = True      # If True and form.header exists, skip the auto company+title block
+    show_history: bool = True              # Whether to render the Approval History table in the PDF
+
+    @field_validator('page_size')
+    @classmethod
+    def validate_page_size(cls, v):
+        allowed = {'A4', 'Letter', 'Legal'}
+        if v not in allowed:
+            raise ValueError(f"page_size must be one of: {sorted(allowed)}")
+        return v
+
+
 class Settings(BaseModel):
     """Global workflow settings"""
     timeout: Optional[dict[str, str]] = None
@@ -803,6 +825,7 @@ class ApprovalProcess(BaseModel):
 
     # Optional configurations
     settings: Optional[Settings] = None
+    print: Optional[PrintConfig] = None    # PDF/print layout settings
     integrations: Optional[Integrations] = None
 
     # Scheduled workflow triggers (cron, webhook, one_time)
