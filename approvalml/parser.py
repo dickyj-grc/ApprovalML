@@ -700,6 +700,7 @@ class PrintConfig(BaseModel):
     orientation: PageOrientation = PageOrientation.PORTRAIT
     page_size: str = "A4"                  # A4 | Letter | Legal
     suppress_auto_header: bool = True      # If True and form.header exists, skip the auto company+title block
+    suppress_section_header: bool = False  # If True, hide all section title bars in the PDF
     show_history: bool = True              # Whether to render the Approval History table in the PDF
 
     @field_validator('page_size')

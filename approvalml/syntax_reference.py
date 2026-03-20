@@ -1303,6 +1303,7 @@ print:
   orientation: portrait         # portrait (default) | landscape
   page_size: A4                 # A4 (default) | Letter | Legal
   suppress_auto_header: true    # true (default) — if form.header exists, skip the auto company+title block
+  suppress_section_header: false # false (default) — when true, hides all section title bars in the PDF
   show_history: true            # true (default) — render the Approval History table at the end
 ```
 
@@ -1313,6 +1314,7 @@ print:
 | `orientation` | `portrait` | Page orientation for PDF output |
 | `page_size` | `A4` | Paper size — A4, Letter, or Legal |
 | `suppress_auto_header` | `true` | When `true` and the workflow has a `form.header`, the system title block (company name + workflow title) is omitted to avoid duplication with the custom header |
+| `suppress_section_header` | `false` | When `true`, all section title bars (dark heading rows) are hidden in the PDF — useful for clean invoice layouts |
 | `show_history` | `true` | When `false`, the Approval History / chronology table is not included in the PDF |
 
 **Print-only fields:**
