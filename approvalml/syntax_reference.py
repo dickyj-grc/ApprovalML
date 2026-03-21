@@ -30,15 +30,19 @@ submission_criteria:
 # Form definition
 form:
   # Optional page-repeating header zone (field names referenced from fields[])
+  # Supports grid (rows), columns (column stacks), or both mixed — see full reference below
   header:
-    grid: []  # e.g. [["company_name", "invoice_no"], ["company_address"]]
+    grid: []          # e.g. [["company_name", "invoice_no"], ["company_address"]]
+    # OR columns mode:
+    # columns: []     # e.g. [["company_logo"], ["company_name", "company_address"]]
+    # column_widths: []  # e.g. ["auto", "1fr"]
 
   # Optional layout configuration for sectioned form body
   layout:
     sections: []  # Section structure (references field names)
     responsive: {}
 
-  # Optional footer — either legacy item-based or field-zone grid
+  # Optional footer — either field-zone grid or legacy item-based
   footer:
     grid: []  # Field-zone style: [["footer_note", "page_no"]]
     # OR legacy item-based:
@@ -621,62 +625,235 @@ Common CSS properties supported in `style`:
 ## Form Header and Field-Zone Footer (Invoice / Document Style)
 
 For document-style forms (invoices, purchase orders, delivery notes) that must match a printed
-layout, use `form.header` and a grid-based `form.footer` that reference fields by name.
+layout, use `form.header` and `form.footer` zones that reference fields by name.
 
 These zones **repeat on every printed page** (unlike the body layout which appears once).
-Place signature fields and totals in the body layout — not in header/footer.
+Place signature fields and totals in the body layout — not in header/footer zones.
 
-### Header / Field-Zone Footer Structure
+---
+
+### Zone Layout Modes
+
+A zone (`header` or `footer`) supports two layout modes, which can be **mixed freely** in any order.
+
+#### `grid` — Row-aligned
+
+Each inner list is one table row. Fields in the same list share that row as equal-width cells.
+A row with a single field spans the full zone width.
+
+```yaml
+header:
+  grid:
+    - ["company_name", "invoice_no"]   # Row 1: two equal columns
+    - ["company_address"]              # Row 2: full-width (spans all columns)
+```
+
+#### `columns` — Column stacks
+
+Each inner list is one vertical column; all columns sit side by side in a single row.
+Use this when each column holds multiple stacked fields (e.g. logo left, address block right).
+`column_widths` sets per-column CSS widths (`auto` shrinks to content; `1fr` fills remaining space).
+
+```yaml
+header:
+  columns:
+    - ["company_logo"]
+    - ["company_name", "company_address", "company_npwp"]
+  column_widths: ["auto", "1fr"]
+```
+
+#### Mixed `grid` + `columns` in one zone
+
+Both keys may appear in the same zone. They render **in the order they appear in the YAML**,
+so placing `grid` before `columns` creates a spanning row above the column block, and vice versa.
+
+```yaml
+header:
+  grid:
+    - ["invoice_title"]          # full-width title row rendered first
+  columns:
+    - ["company_logo"]
+    - ["company_name", "company_address"]
+  column_widths: ["auto", "1fr"]
+  # grid here would render a row BELOW the columns block
+```
+
+---
+
+### Multiple Blocks with Numbered Suffixes
+
+YAML does not allow duplicate keys, so use numeric suffixes to add more than one block of the
+same type. **Rendering order follows the YAML key order.**
+
+Supported naming patterns (N = any integer: 1, 2, 10, …):
+
+| Key pattern | Meaning |
+|---|---|
+| `grid`, `grid1`, `grid2`, … | A grid (row-aligned) block |
+| `columns`, `columns1`, `column1`, `column2`, … | A columns (stacked) block |
+| `column_widths`, `column_widths1`, `column1_widths`, `column1_width`, … | Widths for the matching columns block (same numeric suffix) |
+
+Width keys are automatically paired with their corresponding columns block by matching suffix:
+`column1_widths` → applies to `column1`; `column_widths2` → applies to `columns2`.
+
+```yaml
+header:
+  grid1:
+    - ["doc_type_title"]                       # full-width title
+  column1:
+    - ["company_logo"]
+    - ["company_name", "company_address"]
+  column1_widths: ["auto", "1fr"]
+  grid2:
+    - ["billing_divider"]                      # full-width row between blocks
+  column2:
+    - ["bill_to_label", "bill_to_value"]
+    - ["ship_to_label", "ship_to_value"]
+  column2_widths: ["1fr", "1fr"]
+```
+
+---
+
+### Zone Field Attributes
+
+Fields referenced in a zone are defined in `form.fields` and support these display attributes:
+
+| Attribute | Values | Effect in zone |
+|---|---|---|
+| `show_label` | `true` / `false` | When `false`, hides the label caption. If the field also has no value, the label text itself becomes the displayed value (e.g. a static "INVOICE" heading). |
+| `display` | `block` (default) / `inline` | `block`: label above, value below. `inline`: label and value on the same line as `Label: value`. Consecutive `inline` fields in a column are grouped into an aligned label–value table. |
+| `value_align` | `left` / `center` / `right` | Alignment of the value within its cell. Default `right` for `inline`, unset for `block`. |
+| `align` | `left` / `center` / `right` | Alignment of the whole field cell. |
+| `text_style` | list: `bold`, `italic`, `underline` | Visual styling applied to the value text. |
+| `height` | CSS value e.g. `"60px"` | Maximum height for `image` fields. |
+
+#### `label` field type — static display text
+
+Use `type: label` for headings, notes, or instructions inside form body sections.
+It **never renders an input widget** — only shows plain text. `label` is optional;
+if omitted, `default_value` becomes the displayed text. `show_label` is always `false`.
+
+```yaml
+- name: "billing_heading"
+  type: "label"
+  default_value: "Billing Information"
+  text_style: ["bold"]
+
+- name: "vat_note"
+  type: "label"
+  default_value: "All amounts are in IDR inclusive of VAT."
+  text_style: ["italic"]
+  align: "right"
+```
+
+#### `image` field type — embedding a logo or asset
+
+Use `type: image` with `source: company_logo` to embed the company logo uploaded in System Settings.
+The field never appears as a user-input control; it is display-only.
+
+```yaml
+- name: "company_logo"
+  type: "image"
+  label: ""
+  source: "company_logo"   # resolved from company settings — no form data needed
+  show_label: false
+  height: "60px"
+```
+
+#### `display: inline` example — compact address block
+
+```yaml
+- name: "company_name"
+  type: "text"
+  label: "Company"
+  show_label: false          # show only the value, no "Company:" prefix
+  text_style: ["bold"]
+
+- name: "company_address"
+  type: "text"
+  label: "Address"
+  display: "inline"
+  value_align: "left"
+
+- name: "company_npwp"
+  type: "text"
+  label: "NPWP"
+  display: "inline"
+  value_align: "left"
+```
+
+---
+
+### Complete Invoice Header Example
 
 ```yaml
 form:
-  # Page-repeating header zone — grid of field names
   header:
-    grid:
-      - ["company_name", "invoice_no"]   # Row 1: two columns
-      - ["company_address"]              # Row 2: full-width
+    columns:
+      - ["company_logo"]
+      - ["company_name", "company_address", "company_npwp"]
+    column_widths: ["auto", "1fr"]
 
-  # Page-repeating footer zone — same grid syntax
   footer:
     grid:
-      - ["footer_note", "page_number"]
+      - ["footer_catatan", "footer_ref"]
 
   fields:
-    # Header fields — use show_label: false to display only the value
+    # ── Header: left column ───────────────────────────────────────────────
+    - name: "company_logo"
+      type: "image"
+      source: "company_logo"
+      show_label: false
+      height: "60px"
+
+    # ── Header: right column (stacked inline fields) ──────────────────────
     - name: "company_name"
       type: "text"
-      label: "Company"
-      show_label: false   # Suppress label in the header zone
+      label: "PT Example Indonesia"
+      show_label: false
+      text_style: ["bold"]
       readonly: true
-
-    - name: "invoice_no"
-      type: "autonumber"
-      label: "Invoice No."
-      prefix: "SL_INV_"
-      pad_length: 4
+      default_value: "PT Example Indonesia"
 
     - name: "company_address"
-      type: "textarea"
+      type: "text"
       label: "Address"
+      display: "inline"
+      value_align: "left"
       show_label: false
       readonly: true
 
-    - name: "footer_note"
+    - name: "company_npwp"
       type: "text"
-      label: "Note"
-      show_label: false
+      label: "NPWP"
+      display: "inline"
+      value_align: "left"
+      readonly: true
 
-    - name: "page_number"
-      type: "hidden"   # Populated by the PDF renderer at print time
-      label: "Page"
+    # ── Footer fields ─────────────────────────────────────────────────────
+    - name: "footer_catatan"
+      type: "text"
+      label: "Catatan"
+      show_label: false
+      default_value: "Dokumen ini dicetak secara otomatis"
+
+    - name: "footer_ref"
+      type: "text"
+      label: "Ref"
+      show_label: false
+      align: "right"
+      default_value: "Form Ver 1.0"
 ```
+
+---
 
 ### How Dynamic Values Reach the Header/Footer
 
 Fields in the header zone are regular form fields. Their values come from:
 
-1. **Automatic step with `field_mapping`** — an early workflow step (type: `automatic`) reads the
-   webhook payload (e.g., from Odoo) and maps values into form fields using JSONPath:
+1. **`default_value`** on the field definition — for static text like company name or form version.
+2. **Automatic step with `field_mapping`** — an early workflow step (type: `automatic`) reads the
+   webhook payload and maps values into form fields using JSONPath:
    ```yaml
    fetch_invoice_data:
      type: "automatic"
@@ -689,8 +866,8 @@ Fields in the header zone are regular form fields. Their values come from:
      on_complete:
        continue_to: "finance_approval"
    ```
-2. **Pre-filled form data** from triggers (`preset_form_data`).
-3. **User input** on the initial submission form.
+3. **Pre-filled form data** from triggers (`preset_form_data`).
+4. **User input** on the initial submission form.
 
 ## Workflow Step Types
 
@@ -1394,6 +1571,26 @@ FIELD_TYPES = {
             "  pad_length: 5\n"
             "  start_value: 1\n"
             "  # Generates: EXP-00001, EXP-00002, ..."
+        )
+    },
+    "label": {
+        "validation": [],
+        "optional_props": ["default_value", "text_style", "align", "value_align", "print_only"],
+        "description": (
+            "Display-only static text field. Never renders an input widget — always shows as plain text. "
+            "label is optional; if omitted, default_value is used as the display text. "
+            "show_label is always false for this type. "
+            "Useful for sub-headings, instructions, or notes inside form sections."
+        ),
+        "yaml_example": (
+            "- name: section_note\n"
+            "  type: label\n"
+            "  default_value: \"All amounts are in IDR inclusive of VAT.\"\n"
+            "  text_style: [italic]\n\n"
+            "- name: billing_heading\n"
+            "  type: label\n"
+            "  default_value: \"Billing Information\"\n"
+            "  text_style: [bold]"
         )
     },
     "image": {

@@ -30,6 +30,7 @@ class FieldType(str, Enum):
     AUTOCOMPLETE = "autocomplete"  # Search-as-you-type with data source
     AUTONUMBER = "autonumber"  # Auto-incrementing sequential number with optional prefix/padding
     IMAGE = "image"  # Display-only image; value is a URL or resolved from company media asset gallery
+    LABEL = "label"  # Display-only static text; always read-only, never renders an input widget
 
 
 class StepType(str, Enum):
@@ -219,7 +220,7 @@ class OptionsConfig(BaseModel):
 class FormField(BaseModel):
     """Validation schema for form fields"""
     name: Optional[str] = None  # For array format
-    label: str
+    label: Optional[str] = None  # Required for all types except 'label' (validated below)
     type: FieldType
     required: bool = False
     description: Optional[str] = None
@@ -281,6 +282,13 @@ class FormField(BaseModel):
     placement: Optional[str] = None     # How the image is placed: "inline" (default) | "background" | "cover"
     object_fit: Optional[str] = None    # CSS object-fit: "cover" | "contain" (default) | "fill" | "scale-down" | "none"
     position: Optional[str] = None      # Horizontal alignment: "left" (default) | "center" | "right"
+
+    @model_validator(mode='after')
+    def validate_label_required(self):
+        """label is optional only for type: label — all other types must supply it."""
+        if self.type != FieldType.LABEL and not self.label:
+            raise ValueError(f"Field '{self.name or '?'}': label is required for type '{self.type.value}'")
+        return self
 
     @field_validator('text_style')
     @classmethod
