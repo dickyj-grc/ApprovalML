@@ -282,6 +282,7 @@ class FormField(BaseModel):
     placement: Optional[str] = None     # How the image is placed: "inline" (default) | "background" | "cover"
     object_fit: Optional[str] = None    # CSS object-fit: "cover" | "contain" (default) | "fill" | "scale-down" | "none"
     position: Optional[str] = None      # Horizontal alignment: "left" (default) | "center" | "right"
+    bottom_border: Optional[bool] = None # Native full-width bottom underline
 
     @model_validator(mode='after')
     def validate_label_required(self):
@@ -738,6 +739,7 @@ class Integrations(BaseModel):
 
 
 class FieldZone(BaseModel):
+    """A page-repeating print zone (header or footer) defined via a field grid or columns.
     """A page-repeating print zone (header or footer) defined via a field grid or columns.
 
     Fields listed in the grid/columns are resolved from ``form.fields[]`` by name.
