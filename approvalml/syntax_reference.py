@@ -78,6 +78,7 @@ settings:
 
 ### Basic Field Types
 - `text` - Single line text input
+- `label` - Static text display (no input, for headings or instructions)
 - `textarea` - Multi-line text input
 - `email` - Email validation with validation
 - `number` - Numeric input with validation
