@@ -641,6 +641,9 @@ A zone (`header` or `footer`) supports two layout modes, which can be **mixed fr
 Each inner list is one table row. Fields in the same list share that row as equal-width cells.
 A row with a single field spans the full zone width.
 
+Both `grid` and `columns` are supported with different layouts:
+
+**COLUMNS mode** - Each array is a vertical column:
 ```yaml
 header:
   grid:
@@ -796,6 +799,48 @@ form:
 
   footer:
     grid:
+      - ["footer_note", "page_number"]  # Row: two fields side-by-side
+```
+
+### Auto-sizing Columns
+
+For columns that should size based on content (e.g., image columns that shouldn't waste space):
+
+**Option 1: Global autosize**
+```yaml
+form:
+  header:
+    columns:
+      - ["company_logo"]
+      - ["company_name", "company_address"]
+    autosize: true  # All columns auto-size based on content
+```
+
+**Option 2: Per-column control (most flexible)**
+```yaml
+form:
+  header:
+    columns:
+      - ["company_logo"]
+      - ["company_name", "company_address", "npwp"]
+    column_widths: ["auto", "1fr"]  # First column auto-sizes, second takes remaining space
+```
+
+**CSS Grid Sizing Keywords:**
+- `"auto"` - Size based on content, can grow/shrink naturally
+- `"min-content"` - Shrink to minimum size needed for content
+- `"max-content"` - Expand to maximum size content wants
+- `"fit-content"` - Fit content size with max constraint
+- Numeric (e.g., `2`) - Fractional units (2fr = twice the width of 1fr)
+
+**Example: Invoice header with logo and company info**
+```yaml
+form:
+  header:
+    columns:
+      - ["company_logo"]
+      - ["company_name", "company_address", "company_npwp"]
+    column_widths: ["auto", "1fr"]  # Logo takes only what it needs, text fills remaining
       - ["footer_catatan", "footer_ref"]
 
   fields:
@@ -1384,6 +1429,118 @@ When generating ApprovalML YAML, ensure:
 9. **Termination**: Workflows must have proper end conditions (`end_workflow: true` OR explicit `type: end` nodes)
 
 10. **End Node Best Practice**: For complex workflows with multiple outcomes, use explicit `type: end` nodes instead of `end_workflow: true`
+
+11. **Reserved Keyword**: The step name `initial` is reserved by the system for revision routing. Do NOT create a step named "initial".
+
+## Workflow Revision Pattern
+
+### Automatic "initial" Step
+
+Every workflow automatically creates an `initial` step when submitted. This step:
+- Represents the initial submission by the requestor
+- Is assigned to the requestor (approver_id = requestor_id)
+- Is auto-approved on creation (step_sequence = 0)
+- Can be referenced as a routing target for revisions
+
+### Sending Back for Revision
+
+Any workflow step can route back to `initial` to request revisions from the requestor:
+
+```yaml
+manager_approval:
+  type: "decision"
+  approver: "${requestor.manager}"
+  on_approve:
+    continue_to: "finance_review"
+  on_reject:
+    continue_to: "initial"  # ✨ Send back for revision
+  on_request_changes:
+    text: "Request Changes"
+    continue_to: "initial"  # ✨ Custom action for revisions
+```
+
+### What Happens When Routing to "initial"
+
+1. **System reopens the initial step** - Status changes from APPROVED → PENDING
+2. **Instance status updates** - Workflow status becomes PENDING
+3. **Requestor is notified** - "Your submission requires revision"
+4. **Requestor can edit** - Form is editable with all original data
+5. **Requestor resubmits** - Workflow starts again from the first step
+6. **Audit trail preserved** - All revision history is tracked
+
+### Best Practices for Revisions
+
+1. **Use descriptive action names:**
+   ```yaml
+   on_request_changes:
+     text: "Request Changes"
+     continue_to: "initial"
+   ```
+
+2. **Add a revision notes field:**
+   ```yaml
+   - name: "revision_notes"
+     type: "textarea"
+     label: "Revision Notes"
+     placeholder: "Explain what changed since last submission..."
+   ```
+
+3. **Notify requestor with context:**
+   ```yaml
+   on_reject:
+     notify_requestor: "Please revise the budget justification and resubmit"
+     continue_to: "initial"
+   ```
+
+4. **Multiple approval levels can send back:**
+   ```yaml
+   workflow:
+     manager_approval:
+       on_reject:
+         continue_to: "initial"
+
+     finance_approval:
+       on_reject:
+         continue_to: "initial"
+
+     executive_approval:
+       on_send_back:
+         continue_to: "initial"
+   ```
+
+### Complete Revision Example
+
+```yaml
+workflow:
+  manager_review:
+    type: "decision"
+    approver: "${requestor.manager}"
+    on_approve:
+      continue_to: "finance_review"
+    on_reject:
+      continue_to: "rejected_end"
+    on_request_changes:
+      text: "Request Changes"
+      style: "warning"
+      continue_to: "initial"  # Send back for revision
+
+  finance_review:
+    type: "decision"
+    approver: "finance_manager"
+    on_approve:
+      continue_to: "approved_end"
+    on_send_back:
+      text: "Send Back"
+      continue_to: "initial"  # Finance can also send back
+
+  approved_end:
+    type: "end"
+    notify_requestor: "Request approved!"
+
+  rejected_end:
+    type: "end"
+    notify_requestor: "Request rejected"
+```
 
 ## Common Patterns
 

@@ -738,23 +738,55 @@ class Integrations(BaseModel):
 
 
 class FieldZone(BaseModel):
-    """A page-repeating print zone (header or footer) defined via a field grid.
+    """A page-repeating print zone (header or footer) defined via a field grid or columns.
 
-    Fields listed in the grid are resolved from ``form.fields[]`` by name.
-    Each inner list is a row; each element in that row is a field name.
+    Fields listed in the grid/columns are resolved from ``form.fields[]`` by name.
+
+    Two layout modes:
+    - grid: Each inner list is a ROW, elements placed horizontally
+      Example: [["company_name", "invoice_no"], ["address"]] creates 2 rows
+    - columns: Each inner list is a COLUMN, elements stacked vertically
+      Example: [["logo"], ["company_name", "address", "npwp"]] creates 2 columns
+
+    Auto-sizing:
+    - autosize: true → All columns use CSS Grid 'auto' (size based on content)
+    - column_widths: ["auto", "1fr", 2] → Mix auto, fr units, and numeric values
     """
-    grid: list[list[str]]   # Rows of field names e.g. [["company_name", "invoice_no"], ["address"]]
+    grid: Optional[list[list[str]]] = None  # Row-based layout
+    columns: Optional[list[list[str]]] = None  # Column-based layout
+    column_widths: Optional[list[Union[int, str]]] = None  # Numeric (fr) or string ("auto", "min-content", etc.)
+    autosize: Optional[bool] = None  # If true, all columns use 'auto' sizing
     title: Optional[str] = None  # Optional zone title (not rendered in PDF, used for tooling)
 
-    @field_validator('grid')
-    @classmethod
-    def validate_grid(cls, v):
-        if not v:
-            raise ValueError("FieldZone grid must contain at least one row")
-        for row in v:
+    @model_validator(mode='after')
+    def validate_has_grid_or_columns(self):
+        """Ensure at least one of grid or columns is provided"""
+        if not self.grid and not self.columns:
+            raise ValueError("FieldZone must have either 'grid' or 'columns' defined")
+
+        # Use whichever is provided (columns takes precedence)
+        rows = self.columns if self.columns is not None else self.grid
+
+        # Validate the rows
+        if not rows:
+            raise ValueError("FieldZone grid/columns must contain at least one row")
+        for row in rows:
             if not isinstance(row, list):
-                raise ValueError("Each grid row must be a list of field names")
-        return v
+                raise ValueError("Each grid/columns row must be a list of field names")
+
+        # Validate column_widths if provided
+        if self.column_widths:
+            for width in self.column_widths:
+                if isinstance(width, str):
+                    # Allow CSS Grid sizing keywords
+                    if width not in ['auto', 'min-content', 'max-content', 'fit-content']:
+                        raise ValueError(
+                            f"Invalid column width '{width}'. "
+                            f"String values must be 'auto', 'min-content', 'max-content', or 'fit-content'. "
+                            f"Use numeric values for fractional units (e.g., 1, 2, 3)."
+                        )
+
+        return self
 
 
 # ==========================================
