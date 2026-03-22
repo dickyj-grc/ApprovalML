@@ -31,6 +31,7 @@ class FieldType(str, Enum):
     AUTONUMBER = "autonumber"  # Auto-incrementing sequential number with optional prefix/padding
     IMAGE = "image"  # Display-only image; value is a URL or resolved from company media asset gallery
     LABEL = "label"  # Display-only static text; always read-only, never renders an input widget
+    JSON = "json"  # Stores any JSON value (array, object, primitive); displayed as formatted JSON
 
 
 class StepType(str, Enum):
@@ -573,11 +574,25 @@ class DataSourceParameterMapping(BaseModel):
 
 class DataSourceConfig(BaseModel):
     """Data source configuration for fetching external data in workflows"""
-    connector: str  # Required: Connector name (e.g., "my_database", "airtable_connector")
-    source: str     # Required: Data source name within connector
+    # New preferred method: use source_id (unique identifier)
+    source_id: Optional[str] = None  # Data source unique ID (e.g., "src_abc123")
+
+    # Legacy method: use connector + source names
+    connector: Optional[str] = None  # Connector name (e.g., "my_database", "airtable_connector")
+    source: Optional[str] = None     # Data source name within connector
+
     params: Optional[list[DataSourceParameterMapping]] = None  # Parameter mappings
     save_to: str    # Required: Variable name to save the fetched data (e.g., "employees_json")
     timeout: Optional[int] = None  # Timeout in seconds
+
+    @model_validator(mode='after')
+    def validate_source_specification(self):
+        """Validate that either source_id OR (connector + source) is provided"""
+        if not self.source_id and not (self.connector and self.source):
+            raise ValueError(
+                "Data source must specify either 'source_id' OR both 'connector' and 'source'"
+            )
+        return self
 
 
 class WorkflowStep(BaseModel):
@@ -644,10 +659,13 @@ class WorkflowStep(BaseModel):
     signature_field: Optional[str] = None
 
     # Field mapping for automatic steps that receive a webhook payload.
-    # Keys are form field names; values are JSONPath expressions evaluated
-    # against the step's incoming payload / request_data.
-    # e.g.  field_mapping: { invoice_no: "$.invoice.number", total: "$.invoice.total" }
-    field_mapping: Optional[dict[str, str]] = None
+    # Keys are form field names; values are either:
+    # - Simple string: JSONPath expression for scalar fields
+    # - Dict with 'source' and 'item_fields': For mapping arrays to line_items
+    # Examples:
+    #   Simple: field_mapping: { invoice_no: "$.invoice.number" }
+    #   Array:  field_mapping: { invoice_lines: { source: "$.data", item_fields: {...} } }
+    field_mapping: Optional[dict[str, Union[str, dict]]] = None
 
     @field_validator('choices')
     @classmethod
@@ -676,18 +694,75 @@ class WorkflowStep(BaseModel):
                 raise ValueError("Invalid timeout format. Use format like '48_hours' or '5_business_days'")
         return v
 
+    @field_validator('field_mapping')
+    @classmethod
+    def validate_field_mapping_jsonpath(cls, v):
+        """Validate JSONPath expressions and nested structures in field_mapping."""
+        if v:
+            for field_name, mapping in v.items():
+                if isinstance(mapping, str):
+                    # Simple scalar mapping - validate JSONPath
+                    if not mapping.startswith('$.'):
+                        raise ValueError(
+                            f"JSONPath expression for '{field_name}' must start with '$.' (got: {mapping})"
+                        )
+                elif isinstance(mapping, dict):
+                    # Check if it's a JSONata transformation
+                    if 'jsonata' in mapping:
+                        # JSONata transformation: { source: "$.path", jsonata: "expression" }
+                        if 'source' in mapping:
+                            if not isinstance(mapping['source'], str):
+                                raise ValueError(f"'source' in field_mapping for '{field_name}' must be a string")
+                            if not mapping['source'].startswith('$.'):
+                                raise ValueError(f"'source' JSONPath for '{field_name}' must start with '$.' (got: {mapping['source']})")
+                        if not isinstance(mapping['jsonata'], str):
+                            raise ValueError(f"'jsonata' in field_mapping for '{field_name}' must be a string")
+
+                    # Check if it's a nested array mapping for line_items
+                    elif 'item_fields' in mapping:
+                        # Nested array mapping: { source: "$.array", item_fields: {...} }
+                        if 'source' not in mapping:
+                            raise ValueError(
+                                f"Nested field_mapping for '{field_name}' must have 'source' (JSONPath to array)"
+                            )
+                        if not isinstance(mapping['source'], str):
+                            raise ValueError(
+                                f"'source' in field_mapping for '{field_name}' must be a string"
+                            )
+                        if not mapping['source'].startswith('$.'):
+                            raise ValueError(
+                                f"'source' JSONPath for '{field_name}' must start with '$.' (got: {mapping['source']})"
+                            )
+                        if not isinstance(mapping['item_fields'], dict):
+                            raise ValueError(
+                                f"'item_fields' in field_mapping for '{field_name}' must be a dict"
+                            )
+
+                    else:
+                        raise ValueError(
+                            f"Dict field_mapping for '{field_name}' must have either 'jsonata' (transformation) or 'item_fields' (array mapping)"
+                        )
+                else:
+                    raise ValueError(
+                        f"field_mapping value for '{field_name}' must be string (JSONPath) or dict with 'jsonata' or 'item_fields'"
+                    )
+        return v
+
     @model_validator(mode='after')
     def validate_step_type_requirements(self):
         """Validate that required fields are present based on step type"""
-        # Automatic steps must have either api configuration or field_mapping
+        # Automatic steps must have api, data_source, or resource configuration
         if self.type == StepType.AUTOMATIC:
-            if not self.api and not self.field_mapping:
+            if not self.api and not self.data_source and not self.field_mapping:
                 raise ValueError(
-                    "Automatic steps must have either 'api' configuration (connector + action) "
-                    "or 'field_mapping' to populate form fields from the incoming payload"
+                    "Automatic steps must have either 'api' configuration (connector + action), "
+                    "'data_source' (external data fetch), or 'field_mapping' (payload mapping)"
                 )
             if self.api and (not self.api.connector or not self.api.action):
                 raise ValueError("Automatic steps must specify both 'connector' and 'action' in api config")
+
+            # field_mapping with data_source is valid
+            # field_mapping alone is valid (for webhook payload mapping)
 
         # Notification steps must have recipients and notification
         if self.type == StepType.NOTIFICATION:
@@ -740,7 +815,6 @@ class Integrations(BaseModel):
 
 class FieldZone(BaseModel):
     """A page-repeating print zone (header or footer) defined via a field grid or columns.
-    """A page-repeating print zone (header or footer) defined via a field grid or columns.
 
     Fields listed in the grid/columns are resolved from ``form.fields[]`` by name.
 
@@ -751,8 +825,8 @@ class FieldZone(BaseModel):
       Example: [["logo"], ["company_name", "address", "npwp"]] creates 2 columns
 
     Auto-sizing:
-    - autosize: true → All columns use CSS Grid 'auto' (size based on content)
-    - column_widths: ["auto", "1fr", 2] → Mix auto, fr units, and numeric values
+    - autosize: true - All columns use CSS Grid 'auto' (size based on content)
+    - column_widths: ["auto", "1fr", 2] - Mix auto, fr units, and numeric values
     """
     grid: Optional[list[list[str]]] = None  # Row-based layout
     columns: Optional[list[list[str]]] = None  # Column-based layout
@@ -829,6 +903,66 @@ class TriggerConfig(BaseModel):
     data_condition: Optional[DataConditionConfig] = None    # Optional data-driven condition
     preset_form_data: Optional[dict[str, Any]] = None       # Auto-fill form fields by name match
     requestor_email: Optional[str] = None                   # Employee email to act as requestor
+
+    # Field mapping for webhook/URL triggers
+    # Maps incoming payload/query params to form fields using JSONPath expressions
+    # Supports both simple scalar mapping and nested array mapping for line_items
+    # e.g. field_mapping: { customer_name: "$.customer.name", invoice_lines: { source: "$.data", item_fields: {...} } }
+    field_mapping: Optional[dict[str, Union[str, dict]]] = None
+
+    @field_validator('field_mapping')
+    @classmethod
+    def validate_field_mapping_jsonpath(cls, v):
+        """Validate JSONPath expressions and nested structures."""
+        if v:
+            for field_name, mapping in v.items():
+                if isinstance(mapping, str):
+                    # Simple scalar mapping - validate JSONPath
+                    if not mapping.startswith('$.'):
+                        raise ValueError(
+                            f"JSONPath expression for '{field_name}' must start with '$.' (got: {mapping})"
+                        )
+                elif isinstance(mapping, dict):
+                    # Check if it's a JSONata transformation
+                    if 'jsonata' in mapping:
+                        # JSONata transformation: { source: "$.path", jsonata: "expression" }
+                        if 'source' in mapping:
+                            if not isinstance(mapping['source'], str):
+                                raise ValueError(f"'source' in field_mapping for '{field_name}' must be a string")
+                            if not mapping['source'].startswith('$.'):
+                                raise ValueError(f"'source' JSONPath for '{field_name}' must start with '$.' (got: {mapping['source']})")
+                        if not isinstance(mapping['jsonata'], str):
+                            raise ValueError(f"'jsonata' in field_mapping for '{field_name}' must be a string")
+
+                    # Check if it's a nested array mapping for line_items
+                    elif 'item_fields' in mapping:
+                        # Nested array mapping: { source: "$.array", item_fields: {...} }
+                        if 'source' not in mapping:
+                            raise ValueError(
+                                f"Nested field_mapping for '{field_name}' must have 'source' (JSONPath to array)"
+                            )
+                        if not isinstance(mapping['source'], str):
+                            raise ValueError(
+                                f"'source' in field_mapping for '{field_name}' must be a string"
+                            )
+                        if not mapping['source'].startswith('$.'):
+                            raise ValueError(
+                                f"'source' JSONPath for '{field_name}' must start with '$.' (got: {mapping['source']})"
+                            )
+                        if not isinstance(mapping['item_fields'], dict):
+                            raise ValueError(
+                                f"'item_fields' in field_mapping for '{field_name}' must be a dict"
+                            )
+
+                    else:
+                        raise ValueError(
+                            f"Dict field_mapping for '{field_name}' must have either 'jsonata' (transformation) or 'item_fields' (array mapping)"
+                        )
+                else:
+                    raise ValueError(
+                        f"field_mapping value for '{field_name}' must be string (JSONPath) or dict with 'jsonata' or 'item_fields'"
+                    )
+        return v
 
     @model_validator(mode='after')
     def validate_trigger_type_requirements(self):

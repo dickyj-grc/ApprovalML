@@ -1123,33 +1123,145 @@ update_resource:
 - `data_source` (read): Executes normally - data is fetched and compared
 - `resource` (write): Logs the action in history but does NOT modify the resource
 
-#### 4c. Field Mapping (Populate Form Fields from Webhook Payload)
-Map values from a webhook payload (e.g., from Odoo or an ERP system) directly into form fields
-using JSONPath expressions. This is typically the first step after a webhook trigger.
+#### 4c. Field Mapping (Extract and Transform Data)
+Map and transform values from webhook payloads or API responses into form fields using JSONPath extraction and JSONata transformations.
 
+**Three Types of Field Mapping:**
+
+**1. Simple JSONPath Extraction**
+Extract values directly from JSON using JSONPath:
+```yaml
+field_mapping:
+  customer_name: "$.customer.name"
+  invoice_number: "$.invoice.number"
+  total_amount: "$.invoice.total"
+```
+
+**2. Nested Array Mapping (Line Items)**
+Map JSON arrays to line_items fields:
+```yaml
+field_mapping:
+  invoice_lines:
+    source: "$.invoice.invoice_line_ids"
+    item_fields:
+      product_name: "display_name"
+      quantity: "quantity"
+      price: "price_unit"
+```
+
+**3. JSONata Transformation**
+Transform data using JSONata expressions (string operations, regex, math, conditionals):
+
+**With source (extract first, then transform):**
+```yaml
+field_mapping:
+  # Remove product ID prefix: "[434322544] Plastic Cup" → "Plastic Cup"
+  product_name:
+    source: "$.product.name"
+    jsonata: "$replace(value, /\\[\\d+\\]\\s*/, '')"
+
+  # Format phone: "5551234567" → "(555) 123-4567"
+  phone_formatted:
+    source: "$.customer.phone"
+    jsonata: "$replace(value, /(\\d{3})(\\d{3})(\\d{4})/, '($1) $2-$3')"
+
+  # Extract first 3 chars, uppercase: "john smith" → "JOH"
+  customer_code:
+    source: "$.customer.name"
+    jsonata: "$uppercase($substring(value, 0, 3))"
+```
+
+**Without source (use entire payload):**
+```yaml
+field_mapping:
+  # Concatenate multiple fields
+  full_address:
+    jsonata: "street & ', ' & city & ' ' & postal_code"
+
+  # Combine first and last name
+  full_name:
+    jsonata: "firstName & ' ' & lastName"
+
+  # Calculate discount percentage
+  discount_pct:
+    jsonata: "$round((regular_price - sale_price) / regular_price * 100) & '%'"
+```
+
+**JSONata Common Patterns:**
+```yaml
+# String operations
+jsonata: "$uppercase(value)"                          # Uppercase
+jsonata: "$lowercase(value)"                          # Lowercase
+jsonata: "$trim(value)"                               # Trim whitespace
+jsonata: "$substring(value, 0, 10)"                   # First 10 chars
+jsonata: "$substringAfter(value, '@')"                # Extract domain from email
+
+# Regex operations
+jsonata: "$replace(value, /\\[\\d+\\]\\s*/, '')"     # Remove ID prefix
+jsonata: "$replace(value, /[^0-9]/, '')"              # Extract numbers only
+jsonata: "$replace(value, /<[^>]*>/, '')"             # Remove HTML tags
+
+# Concatenation
+jsonata: "firstName & ' ' & lastName"                 # Join with space
+jsonata: "street & ', ' & city & ' ' & zip"           # Multi-field concat
+
+# Conditional logic
+jsonata: "qty > 100 ? 'In Stock' : 'Low Stock'"       # Ternary operator
+jsonata: "value ? value : 'N/A'"                      # Null check
+
+# Math operations
+jsonata: "$round((original - sale) / original * 100)" # Calculate percentage
+```
+
+**Complete Example:**
 ```yaml
 fetch_invoice_data:
-  name: "Populate Invoice Fields"
+  name: "Populate and Transform Invoice Fields"
   type: "automatic"
   field_mapping:
-    company_name: "$.company.name"
-    company_address: "$.company.street"
+    # Simple extraction
     invoice_no: "$.invoice.name"
     invoice_date: "$.invoice.invoice_date"
-    due_date: "$.invoice.invoice_date_due"
-    customer_name: "$.invoice.partner_id.name"
-    subtotal: "$.invoice.amount_untaxed"
-    tax_amount: "$.invoice.amount_tax"
-    total_amount: "$.invoice.amount_total"
+
+    # JSONata transformations
+    product_name:
+      source: "$.product.name"
+      jsonata: "$replace(value, /\\[\\d+\\]\\s*/, '')"
+
+    customer_code:
+      source: "$.customer.name"
+      jsonata: "$uppercase($substring(value, 0, 3))"
+
+    full_address:
+      jsonata: "street & ', ' & city & ' ' & postal_code"
+
+    # Array mapping
+    invoice_lines:
+      source: "$.invoice.invoice_line_ids"
+      item_fields:
+        product: "display_name"
+        quantity: "quantity"
+        price: "price_unit"
   on_complete:
     continue_to: "finance_approval"
 ```
 
 **`field_mapping` Properties:**
 - Keys are form field names (must exist in `form.fields`)
-- Values are JSONPath expressions evaluated against the incoming `request_data` / webhook payload
-- Missing paths silently leave the target field unchanged
+- Values can be:
+  - String: JSONPath expression (e.g., `"$.customer.name"`)
+  - Dict with `source` + `jsonata`: Extract then transform
+  - Dict with `jsonata` only: Transform using entire payload
+  - Dict with `source` + `item_fields`: Map array to line_items
+- Missing paths are skipped with warnings logged
+- Errors don't block workflow execution (fault-tolerant)
 - Can be combined with `data_source` or `resource` on the same step
+
+**Error Handling:**
+- JSONPath not found: Field skipped, warning logged
+- JSONata expression fails: Error logged, field skipped
+- Empty arrays: Field set to `[]`
+- Workflow continues regardless of mapping errors
 
 **Important:** `type: automatic` should ONLY be used for data operations. For sending notifications, use `type: notification` instead.
 
@@ -1792,13 +1904,16 @@ STEP_TYPES = {
         "optional_props": ["api", "data_source", "resource", "field_mapping", "on_failure"],
         "requires_one_of": ["api", "data_source", "resource", "field_mapping"],
         "field_mapping_description": (
-            "Maps values from the incoming webhook payload or instance request_data to form fields. "
-            "Keys are form field names; values are JSONPath expressions evaluated against the payload. "
-            "e.g. { invoice_no: '$.invoice.number', total: '$.invoice.total_amount' }"
+            "Extracts and transforms values from webhook payloads or API responses into form fields. "
+            "Supports three types: (1) Simple JSONPath extraction: { field: '$.path' }, "
+            "(2) JSONata transformation: { field: { source: '$.path', jsonata: '$uppercase(value)' } }, "
+            "(3) Array mapping: { field: { source: '$.array', item_fields: {...} } }. "
+            "JSONata enables string operations, regex, math, and conditionals. "
+            "e.g. { product_name: { source: '$.product.name', jsonata: '$replace(value, /\\\\[\\\\d+\\\\]\\\\s*/, \"\")' } }"
         ),
         "data_source_props": {
             "required": ["source_id", "save_to"],
-            "optional": ["compare_to_resource", "save_diff_to", "ignore_keys"]
+            "optional": ["compare_to_resource", "save_diff_to", "ignore_keys", "field_mapping"]
         },
         "resource_props": {
             "required": ["data_from", "resource_name"]
