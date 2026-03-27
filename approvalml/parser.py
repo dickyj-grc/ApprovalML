@@ -816,7 +816,13 @@ class Integrations(BaseModel):
 class FieldZone(BaseModel):
     """A page-repeating print zone (header or footer) defined via a field grid or columns.
 
-    Fields listed in the grid/columns are resolved from ``form.fields[]`` by name.
+    Fields listed in the grid/columns are resolved by name.  Resolution order (Option A):
+    1. ``zone.fields[]`` — inline field definitions local to this zone
+    2. ``form.fields[]`` — the global form field list
+
+    Zone-local fields (defined in ``zone.fields``) are NOT rendered in the form body;
+    they only appear inside this zone.  Use them for display-only cells like company
+    logos, invoice titles, or delivery reference boxes that must not clutter the body.
 
     Two layout modes:
     - grid: Each inner list is a ROW, elements placed horizontally
@@ -828,6 +834,7 @@ class FieldZone(BaseModel):
     - autosize: true - All columns use CSS Grid 'auto' (size based on content)
     - column_widths: ["auto", "1fr", 2] - Mix auto, fr units, and numeric values
     """
+    fields: Optional[list['FormField']] = None  # Zone-local field definitions (not rendered in form body)
     grid: Optional[list[list[str]]] = None  # Row-based layout
     columns: Optional[list[list[str]]] = None  # Column-based layout
     column_widths: Optional[list[Union[int, str]]] = None  # Numeric (fr) or string ("auto", "min-content", etc.)
@@ -1012,6 +1019,13 @@ class ApprovalProcess(BaseModel):
     # These are NOT used in production; they only pre-populate the test submission form
     # so testers don't have to fill in every field manually.
     test_data: Optional[dict[str, Any]] = None
+
+    # Optional simple key-rename map for URL/API auto-submit.
+    # When the calling system uses different parameter names than the form field names,
+    # this renames incoming keys before they are matched to form fields.
+    # e.g. param_mapping: { emp_id: employee_id, cost: amount }
+    # Works for query-string params and flat API payloads (no JSONPath needed).
+    param_mapping: Optional[dict[str, str]] = None
 
     @model_validator(mode='before')
     @classmethod

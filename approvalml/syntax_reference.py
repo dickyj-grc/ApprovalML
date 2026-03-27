@@ -32,6 +32,7 @@ form:
   # Optional page-repeating header zone (field names referenced from fields[])
   # Supports grid (rows), columns (column stacks), or both mixed — see full reference below
   header:
+    fields: []        # Zone-local field definitions (not rendered in form body)
     grid: []          # e.g. [["company_name", "invoice_no"], ["company_address"]]
     # OR columns mode:
     # columns: []     # e.g. [["company_logo"], ["company_name", "company_address"]]
@@ -630,6 +631,35 @@ layout, use `form.header` and `form.footer` zones that reference fields by name.
 
 These zones **repeat on every printed page** (unlike the body layout which appears once).
 Place signature fields and totals in the body layout — not in header/footer zones.
+
+---
+
+### Zone-Local Field Definitions
+
+Fields can be defined directly inside a zone's `fields` list.  These fields exist **only in that
+zone** — they are not rendered in the form body, and they take precedence over any same-name field
+in `form.fields` (Option A lookup order).
+
+Use this for display-only cells that must not appear in the body:
+
+```yaml
+form:
+  footer:
+    fields:
+      - name: footer_ref
+        type: text
+        label: Referensi Pengiriman
+        show_label: false
+        placeholder: e.g. SO/OUT-FG/03569
+        align: right
+    grid:
+      - [ footer_catatan, footer_ref ]
+  # footer_catatan is defined in form.fields (also appears in body sections)
+  # footer_ref   is defined only above — never shown in the body
+```
+
+Zone-local fields still need to be referenced in the zone's `grid` or `columns` to be rendered.
+Input fields work normally (react-hook-form registers them via the zone render).
 
 ---
 
@@ -1740,6 +1770,25 @@ test_data:
 - Keys must match field names defined in `form.fields`
 - Values can be any YAML scalar (string, number, boolean) or a list of dicts for `line_items` fields
 - The section is silently ignored when submitting real workflow requests
+
+## Parameter Mapping (Optional)
+
+`param_mapping` is a simple key-rename map for URL and API auto-submit. When the system that
+triggers the workflow uses different parameter names than the form field names, this translates
+them transparently — no JSONPath needed.
+
+```yaml
+param_mapping:
+  emp_id: employee_id        # URL ?emp_id=123  →  form field employee_id
+  cost: amount               # URL ?cost=500    →  form field amount
+  dept: department_code      # URL ?dept=FIN    →  form field department_code
+```
+
+**Rules:**
+- Keys are the *incoming* parameter names (from URL query string or flat API payload)
+- Values are the target form field names (must exist in `form.fields`)
+- Entirely optional — omit it when parameter names already match field names
+- Only applies to flat key-value params; for nested JSON payloads use `triggers[].field_mapping`
 
 ## Print Settings (Optional)
 
