@@ -99,6 +99,7 @@ class FormLayout(BaseModel):
     """Form layout configuration"""
     sections: list[FormSection]
     responsive: Optional[ResponsiveLayout] = None
+    completed_sections: Optional[list[str]] = None  # Section IDs shown (read-only) when workflow has no pending step
 
     @field_validator('sections')
     @classmethod
@@ -1121,6 +1122,15 @@ class ApprovalProcess(BaseModel):
                                 f"Step '{step_id}' references unknown section '{section_id}' in mixed_sections. "
                                 f"Available sections: {', '.join(sorted(section_ids))}"
                             )
+
+            # Validate completed_sections on the layout itself
+            if self.form_layout.completed_sections:
+                for section_id in self.form_layout.completed_sections:
+                    if section_id not in section_ids:
+                        raise ValueError(
+                            f"form.layout.completed_sections references unknown section '{section_id}'. "
+                            f"Available sections: {', '.join(sorted(section_ids))}"
+                        )
 
         return self
 

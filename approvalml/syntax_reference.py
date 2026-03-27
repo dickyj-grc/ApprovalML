@@ -40,7 +40,8 @@ form:
 
   # Optional layout configuration for sectioned form body
   layout:
-    sections: []  # Section structure (references field names)
+    sections: []           # Section structure (references field names)
+    completed_sections: [] # Section IDs shown (read-only) when workflow has no pending step
     responsive: {}
 
   # Optional footer — either field-zone grid or legacy item-based
@@ -476,6 +477,42 @@ workflow:
 - If a step has no `view_sections` and no `edit_sections`, all sections are displayed in view mode by default
 - The `initial: true` section is shown when the requestor creates the workflow
 - Sections not marked as `initial` are typically filled in during approval steps
+
+### Completed View (`completed_sections`)
+
+`completed_sections` controls which sections are shown (read-only) once the workflow has no
+pending step — i.e. after full approval, rejection, or any terminal state.  It also applies
+to the downloaded PDF.
+
+```yaml
+form:
+  layout:
+    completed_sections:
+      - invoice_header_info   # shown first
+      - line_items_section
+      - totals_section
+    sections:
+      - id: invoice_entry
+        initial: true
+        grid: [[ invoice_no ]]
+      - id: invoice_header_info
+        title: Informasi Invoice
+        columns:
+          - [ customer_name, customer_address ]
+          - [ invoice_no, invoice_date, due_date ]
+      - id: line_items_section
+        title: Daftar Barang
+        grid: [[ invoice_lines ]]
+      - id: totals_section
+        title: Ringkasan Nilai
+        columns:
+          - [ authorized_signature ]
+          - [ jumlah, total_amount, ppn ]
+```
+
+- Sections are rendered in the order listed in `completed_sections`, not their definition order
+- Without `completed_sections`, all sections are shown in view mode (existing behaviour)
+- The `invoice_entry` section above is intentionally omitted — it only needs to exist during initial submission
 
 ## Form Footer (Optional)
 
