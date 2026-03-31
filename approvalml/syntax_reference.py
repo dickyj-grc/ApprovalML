@@ -1280,6 +1280,96 @@ jsonata: "value ? value : 'N/A'"                      # Null check
 jsonata: "$round((original - sale) / original * 100)" # Calculate percentage
 ```
 
+**4. `vars` — Cross-step Reference in JSONata**
+
+All JSONata expressions (top-level and inside `item_fields`) have access to a special `vars` key
+that points to the full `request_data` of the current workflow instance — i.e. every value saved
+by every previous step. Use `vars` to reference data fetched in an earlier step when the current
+step's own payload does not contain it.
+
+```yaml
+# vars.some_step_save_key  →  the full API response saved by that step
+# vars.some_step_save_key.data  →  the `data` array inside that response
+
+# Look up a tax name from a lookup table saved in a previous step:
+tax:
+  source: "tax_id[0]"      # value = raw integer ID (e.g. 123) from current item
+  jsonata: |
+    vars.tax_lookup.data[id = $number(value)].name
+
+# Join all tax names for a multi-tax line:
+all_taxes:
+  source: "tax_id"          # value = array [123, 456]
+  jsonata: |
+    $join($map(value, function($id) {
+      vars.tax_lookup.data[id = $number($id)].name
+    }), ", ")
+```
+
+This enables the **three-pass pattern** for ERP / relational line-item lookups (see example below).
+
+**Three-Pass Pattern (ERP Relational Field Lookup)**
+
+ERP systems like Odoo store relational fields as raw integer ID arrays (e.g. `tax_id: [123, 456]`).
+Making one API call per row causes N+1 problems. The three-pass pattern solves this with only
+existing YAML keys:
+
+- **Pass 1** — fetch line items; use `field_mapping` JSONata to collect all unique IDs into a flat list
+- **Pass 2** — batch-fetch display names for those IDs using `data_source` with `from_field` params
+- **Pass 3** — standalone `field_mapping` (no `data_source`) reads saved data + resolves IDs via `vars`
+
+```yaml
+# Pass 1: fetch line items, extract unique tax IDs into a flat list
+fetch_lines:
+  type: automatic
+  data_source:
+    source_id: src_invoice_lines
+    save_to: lines_raw
+  field_mapping:
+    tax_ids:
+      jsonata: "$distinct(data.tax_id)"   # data = API response; JSONata flattens nested arrays
+  on_complete:
+    continue_to: fetch_tax_names
+
+# Pass 2: batch-fetch tax descriptions using the collected IDs
+fetch_tax_names:
+  type: automatic
+  data_source:
+    source_id: src_tax_api
+    params:
+      - name: ids
+        from_field: field.tax_ids
+    save_to: tax_lookup
+  on_complete:
+    continue_to: map_lines
+
+# Pass 3: standalone field_mapping (no data_source) — reads from request_data via vars
+map_lines:
+  type: automatic
+  field_mapping:
+    invoice_lines:
+      source: "$.lines_raw.data"          # JSONPath on instance.request_data
+      item_fields:
+        qty: quantity
+        unit_price: price_unit
+        tax:
+          source: "tax_id[0]"             # value = first tax ID integer, e.g. 123
+          jsonata: |
+            vars.tax_lookup.data[id = $number(value)].name
+        all_taxes:
+          source: "tax_id"                # value = full array [123, 456]
+          jsonata: |
+            $join($map(value, function($id) {
+              vars.tax_lookup.data[id = $number($id)].name
+            }), ", ")
+  on_complete:
+    continue_to: manager_approval
+```
+
+After Pass 1: `request_data["lines_raw"]` = full API response; `request_data["tax_ids"]` = `[123, 456]`
+After Pass 2: `request_data["tax_lookup"]["data"]` = array of tax records with `id` and `name`
+After Pass 3: `invoice_lines[i].tax` = `"VAT 10%"` (resolved from integer `123`)
+
 **Complete Example:**
 ```yaml
 fetch_invoice_data:
@@ -1320,6 +1410,8 @@ fetch_invoice_data:
   - Dict with `source` + `jsonata`: Extract then transform
   - Dict with `jsonata` only: Transform using entire payload
   - Dict with `source` + `item_fields`: Map array to line_items
+- All JSONata expressions receive a `vars` key pointing to the full `request_data` (all data saved by prior steps); use `vars.save_key.field` to reference earlier fetch results
+- A step with only `field_mapping` (no `data_source`) is valid and reads from `request_data` directly — used as Pass 3 in the three-pass lookup pattern
 - Missing paths are skipped with warnings logged
 - Errors don't block workflow execution (fault-tolerant)
 - Can be combined with `data_source` or `resource` on the same step
