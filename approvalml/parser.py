@@ -752,7 +752,7 @@ class WorkflowStep(BaseModel):
     @model_validator(mode='after')
     def validate_step_type_requirements(self):
         """Validate that required fields are present based on step type"""
-        # Automatic steps must have api, data_source, or resource configuration
+        # Automatic steps must have api, data_source, or asset configuration
         if self.type == StepType.AUTOMATIC:
             if not self.api and not self.data_source and not self.field_mapping:
                 raise ValueError(
@@ -888,11 +888,11 @@ class DataConditionConfig(BaseModel):
     """Configuration for data-driven trigger conditions.
 
     Fetches data from a data source and optionally compares it against
-    a saved resource baseline using deepdiff.
+    a saved asset baseline using deepdiff.
     """
     data_source_connector: Optional[str] = None              # Connector name (optional, resolved from source)
     data_source_name: str                                   # Data source name (e.g., "GCP IAM Users")
-    compare_to_resource: Optional[str] = None               # Resource name for deepdiff comparison
+    compare_to_asset: Optional[str] = None                  # Asset name for deepdiff comparison
     params: Optional[list[dict[str, Any]]] = None           # Data source parameters
     ignore_keys: Optional[list[str]] = None                 # Keys to ignore in deepdiff comparison
 

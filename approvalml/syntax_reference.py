@@ -1115,10 +1115,10 @@ routing_step:
 ```
 
 ### 4. Automatic Steps (`automatic`)
-**For data fetching and resource updates.** System processing without human interaction.
+**For data fetching and asset updates.** System processing without human interaction.
 
 #### 4a. Data Source Fetch (Read)
-Fetch data from a configured data source and optionally compare against a baseline resource:
+Fetch data from a configured data source and optionally compare against a baseline asset:
 
 ```yaml
 fetch_iam_data:
@@ -1127,7 +1127,7 @@ fetch_iam_data:
   data_source:
     source_id: "src_cff5797288f440d7"  # Data source unique ID (connector is implicit)
     save_to: "iam_users_json"           # Save fetched data to this form field
-    compare_to_resource: "gcp-iam-baseline"  # Optional: compare with resource baseline
+    compare_to_asset: "gcp-iam-baseline"  # Optional: compare with asset baseline
     save_diff_to: "deepdiff_gcs"        # Optional: save diff result to this field
     ignore_keys: []                     # Optional: keys to ignore in comparison
   on_complete:
@@ -1137,7 +1137,7 @@ fetch_iam_data:
 **Data Source Properties:**
 - `source_id`: Unique ID of the data source (e.g., `src_xxx`) - **Required** (connector is resolved automatically)
 - `save_to`: Form field name to store fetched data - **Required**
-- `compare_to_resource`: Resource name to compare fetched data against (uses deepdiff)
+- `compare_to_asset`: Asset name to compare fetched data against (uses deepdiff)
 - `save_diff_to`: Form field to store the diff result string (`"None"` if no changes, or descriptive summary)
 - `ignore_keys`: List of top-level keys to exclude from comparison
 
@@ -1168,27 +1168,27 @@ fetch_iam_data:
 - Fields containing emphasized text get an amber background to draw attention
 - Use this for important values that approvers need to review carefully
 
-#### 4b. Resource Update (Write)
-Update a resource with data from a form field:
+#### 4b. Asset Update (Write)
+Update an asset with data from a form field:
 
 ```yaml
-update_resource:
+update_asset:
   type: "automatic"
-  name: "Update IAM Baseline Resource"
-  resource:
+  name: "Update IAM Baseline Asset"
+  asset:
     data_from: "iam_users_json"      # Get data from this form field
-    resource_name: "gcp-iam-baseline" # Update this resource
+    asset_name: "gcp-iam-baseline"   # Update this asset
   on_complete:
     continue_to: "approved_end"
 ```
 
-**Resource Properties:**
+**Asset Properties:**
 - `data_from`: Form field containing the data to save - **Required**
-- `resource_name`: Name of the resource to update - **Required**
+- `asset_name`: Name of the asset to update - **Required**
 
 **Test Mode Behavior:**
 - `data_source` (read): Executes normally - data is fetched and compared
-- `resource` (write): Logs the action in history but does NOT modify the resource
+- `asset` (write): Logs the action in history but does NOT modify the asset
 
 #### 4c. Field Mapping (Extract and Transform Data)
 Map and transform values from webhook payloads or API responses into form fields using JSONPath extraction and JSONata transformations.
@@ -1987,8 +1987,8 @@ STEP_TYPES = {
     },
     "automatic": {
         "required_props": ["on_complete"],
-        "optional_props": ["api", "data_source", "resource", "field_mapping", "on_failure"],
-        "requires_one_of": ["api", "data_source", "resource", "field_mapping"],
+        "optional_props": ["api", "data_source", "asset", "field_mapping", "on_failure"],
+        "requires_one_of": ["api", "data_source", "asset", "field_mapping"],
         "field_mapping_description": (
             "Extracts and transforms values from webhook payloads or API responses into form fields. "
             "Supports three types: (1) Simple JSONPath extraction: { field: '$.path' }, "
@@ -1999,10 +1999,10 @@ STEP_TYPES = {
         ),
         "data_source_props": {
             "required": ["source_id", "save_to"],
-            "optional": ["compare_to_resource", "save_diff_to", "ignore_keys", "field_mapping"]
+            "optional": ["compare_to_asset", "save_diff_to", "ignore_keys", "field_mapping"]
         },
-        "resource_props": {
-            "required": ["data_from", "resource_name"]
+        "asset_props": {
+            "required": ["data_from", "asset_name"]
         }
     },
     "notification": {
