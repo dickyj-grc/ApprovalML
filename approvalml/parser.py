@@ -7,7 +7,7 @@ from enum import Enum
 from typing import Any, Optional, Union
 
 import yaml
-from pydantic import BaseModel, ValidationError, ValidationInfo, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, ValidationInfo, field_validator, model_validator
 
 
 class FieldType(str, Enum):
@@ -573,6 +573,41 @@ class DataSourceParameterMapping(BaseModel):
         return self
 
 
+class DataSourceJoin(BaseModel):
+    """Inline batch-lookup join for relational ID fields on fetched rows.
+
+    Resolves integer FK fields (e.g. tax_id: [123, 456]) into human-readable
+    names in a single step — no extra steps, no JSONata, no vars wiring needed.
+
+    Single field:
+        pick: name
+        as: tax_name
+
+    Multiple fields (one API call, multiple output fields):
+        pick:
+          tax_name: name
+          tax_rate: amount
+        # `as` not needed when pick is a dict
+    """
+    field: str                                          # field on each row containing the ID(s)
+    source_id: str                                      # connector source to batch-fetch from
+    on: str = 'id'                                      # key field in join records (default: "id")
+    pick: Union[str, dict[str, str]] = 'name'           # single field name OR {output: source} mapping
+    as_field: Optional[str] = Field(default=None, alias='as')  # output field; required when pick is a string
+    param: str = 'ids'                                  # parameter name sent to join source (default: "ids")
+    separator: str = ', '                               # separator for multi-value joins (default: ", ")
+    as_array: bool = False                              # if True, output is a list instead of joined string
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    @model_validator(mode='after')
+    def validate_as_required_for_string_pick(self):
+        """as is required when pick is a single field name; not needed when pick is a dict."""
+        if isinstance(self.pick, str) and not self.as_field:
+            raise ValueError("'as' is required when 'pick' is a single field name")
+        return self
+
+
 class DataSourceConfig(BaseModel):
     """Data source configuration for fetching external data in workflows"""
     # New preferred method: use source_id (unique identifier)
@@ -585,6 +620,7 @@ class DataSourceConfig(BaseModel):
     params: Optional[list[DataSourceParameterMapping]] = None  # Parameter mappings
     save_to: str    # Required: Variable name to save the fetched data (e.g., "employees_json")
     timeout: Optional[int] = None  # Timeout in seconds
+    join: Optional[list[DataSourceJoin]] = None  # Inline batch-lookup joins for relational ID fields
 
     @model_validator(mode='after')
     def validate_source_specification(self):

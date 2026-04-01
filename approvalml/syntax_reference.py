@@ -1308,7 +1308,98 @@ all_taxes:
 
 This enables the **three-pass pattern** for ERP / relational line-item lookups (see example below).
 
+**Inline Join — Resolving Relational ID Fields (Single Step)**
+
+ERP systems like Odoo store relational fields as integer IDs or arrays (e.g. `tax_id: [123, 456]`).
+The `join` key on `data_source` resolves these automatically in a single step — the engine
+batch-fetches the related records, builds an in-memory lookup, and writes the resolved name
+directly onto each row before `field_mapping` runs. No extra steps, no JSONata, no `vars`.
+
+**Single-field pick** — extract one field from the join record, write to one output field:
+
+```yaml
+fetch_invoice_lines:
+  type: automatic
+  data_source:
+    source_id: src_invoice_lines
+    save_to: invoice_lines
+    join:
+      - field: tax_ids         # field on each row (scalar int or array of ints)
+        source_id: src_tax_api # connector source to batch-fetch related records from
+        on: id                 # key field in join records to match against (default: "id")
+        pick: name             # value field to extract from each matched record (default: "name")
+        as: tax_name           # output field written onto each enriched row
+        # param: ids           # optional — param name sent to join source (default: "ids")
+        # separator: ", "      # optional — separator when field is an array (default: ", ")
+        # as_array: false      # optional — true outputs a list instead of joined string
+  field_mapping:
+    invoice_lines:
+      source: "$.invoice_lines.data"
+      item_fields:
+        qty: quantity
+        unit_price: price_unit
+        tax: tax_name          # already resolved — no JSONata or vars needed
+  on_complete:
+    continue_to: manager_approval
+```
+
+**Multi-field pick** — extract several fields from the same join record in one API call:
+
+```yaml
+fetch_invoice_lines:
+  type: automatic
+  data_source:
+    source_id: src_invoice_lines
+    save_to: invoice_lines
+    join:
+      - field: tax_ids
+        source_id: src_tax_api
+        on: id
+        pick:                  # dict: output_field_name: source_field_name
+          tax_name: name       # row.tax_name ← matched_record.name
+          tax_rate: amount     # row.tax_rate ← matched_record.amount
+          tax_account: code    # row.tax_account ← matched_record.code
+        # `as` is not used when pick is a dict
+  field_mapping:
+    invoice_lines:
+      source: "$.invoice_lines.data"
+      item_fields:
+        qty: quantity
+        unit_price: price_unit
+        tax: tax_name          # e.g. "Included PPN"
+        rate: tax_rate         # e.g. "11%"
+        account: tax_account   # e.g. "4310"
+  on_complete:
+    continue_to: manager_approval
+```
+
+**`join` field reference:**
+
+| Field | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `field` | ✅ Yes | — | Field on each fetched row that holds the FK ID(s) |
+| `source_id` | ✅ Yes | — | Connector source to batch-fetch related records from |
+| `as` | ✅ when `pick` is a string | — | Output field written onto each enriched row |
+| `on` | ❌ No | `"id"` | Key field in the join source records to match against |
+| `pick` | ❌ No | `"name"` | String (single field) or dict `{output: source}` (multiple fields) |
+| `param` | ❌ No | `"ids"` | Parameter name sent to the join source for the batch IDs |
+| `separator` | ❌ No | `", "` | Separator when `field` is an array and output is a string |
+| `as_array` | ❌ No | `false` | `true` → output is a list of strings instead of a joined string |
+
+**Key behaviours:**
+- Multiple join entries can be listed under `join:` to resolve several FK fields in one step.
+  Each entry makes one batch API call to its `source_id`.
+- `pick` as a dict extracts multiple fields from the **same** API call — no extra network requests.
+- All joins run before `field_mapping`, so resolved names are available immediately.
+- Array FKs (`tax_ids: [49, 50]`) produce `"Included PPN, GST 10%"` (string) or
+  `["Included PPN", "GST 10%"]` (with `as_array: true`).
+
+---
+
 **Three-Pass Pattern (ERP Relational Field Lookup)**
+
+The three-pass pattern is the older approach for the same problem. Prefer the single-step
+`join` key above. The three-pass pattern remains documented for reference and backward compatibility.
 
 ERP systems like Odoo store relational fields as raw integer ID arrays (e.g. `tax_id: [123, 456]`).
 Making one API call per row causes N+1 problems. The three-pass pattern solves this with only
