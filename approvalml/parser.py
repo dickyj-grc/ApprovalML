@@ -63,6 +63,51 @@ class ResponsiveLayout(BaseModel):
     mobile: Optional[int] = None  # Max columns on mobile (usually 1)
 
 
+class FieldLayoutOverride(BaseModel):
+    """Per-field layout attributes for layout.defaults and section.fields.
+
+    These are visual/positional attributes — they describe *how* a field is
+    rendered in a specific context, not *what* the field is. Keeping them here
+    instead of on FormField means the same field can appear differently across
+    sections without duplication.
+
+    Priority order (highest wins): section.fields > layout.defaults > field-level attrs (legacy)
+    """
+    align: Optional[str] = None           # "left" | "center" | "right"
+    bottom_border: Optional[bool] = None  # Full-width bottom border under the field entry
+    span: Optional[str] = None            # "full" | "half" | "auto" — grid column span hint
+    valign: Optional[str] = None          # "top" | "middle" | "bottom"
+    label_position: Optional[str] = None  # "above" | "inline" | "hidden"
+
+    @field_validator('align')
+    @classmethod
+    def validate_align(cls, v):
+        if v is not None and v not in ('left', 'center', 'right'):
+            raise ValueError("align must be one of: left, center, right")
+        return v
+
+    @field_validator('valign')
+    @classmethod
+    def validate_valign(cls, v):
+        if v is not None and v not in ('top', 'middle', 'bottom'):
+            raise ValueError("valign must be one of: top, middle, bottom")
+        return v
+
+    @field_validator('span')
+    @classmethod
+    def validate_span(cls, v):
+        if v is not None and v not in ('full', 'half', 'auto'):
+            raise ValueError("span must be one of: full, half, auto")
+        return v
+
+    @field_validator('label_position')
+    @classmethod
+    def validate_label_position(cls, v):
+        if v is not None and v not in ('above', 'inline', 'hidden'):
+            raise ValueError("label_position must be one of: above, inline, hidden")
+        return v
+
+
 class FormSection(BaseModel):
     """Layout section for organizing form fields.
 
@@ -82,6 +127,9 @@ class FormSection(BaseModel):
     columns: Optional[list[list[str]]] = None    # Independent column-stack layout
     column_widths: Optional[list[str]] = None    # CSS flex widths per column e.g. ["2fr","1fr"] or ["60%","40%"]
                                                  # Length must match columns list; ignored when using grid
+    fields: Optional[dict[str, FieldLayoutOverride]] = None  # Per-field layout overrides for this section.
+                                                             # Keys are field names; values override layout.defaults
+                                                             # for fields rendered inside this section.
 
     @model_validator(mode='after')
     def validate_layout_mode(self) -> 'FormSection':
@@ -98,6 +146,9 @@ class FormSection(BaseModel):
 class FormLayout(BaseModel):
     """Form layout configuration"""
     sections: list[FormSection]
+    defaults: Optional[dict[str, FieldLayoutOverride]] = None  # Default layout attributes per field, applied across
+                                                               # all sections unless overridden by section.fields.
+                                                               # Keys are field names.
     responsive: Optional[ResponsiveLayout] = None
     completed_sections: Optional[list[str]] = None  # Section IDs shown (read-only) when workflow has no pending step
 
