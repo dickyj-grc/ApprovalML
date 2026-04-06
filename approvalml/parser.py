@@ -146,9 +146,9 @@ class FormSection(BaseModel):
 class FormLayout(BaseModel):
     """Form layout configuration"""
     sections: list[FormSection]
-    defaults: Optional[dict[str, FieldLayoutOverride]] = None  # Default layout attributes per field, applied across
-                                                               # all sections unless overridden by section.fields.
-                                                               # Keys are field names.
+    fields: Optional[dict[str, FieldLayoutOverride]] = None  # Form-scope layout attributes per field, applied across
+                                                             # all sections unless overridden by section.fields.
+                                                             # Keys are field names.
     responsive: Optional[ResponsiveLayout] = None
     completed_sections: Optional[list[str]] = None  # Section IDs shown (read-only) when workflow has no pending step
 

@@ -105,11 +105,38 @@ settings:
   type: "text"
   label: "Display Label"
   show_label: false   # If false, hides the label caption (useful in header/footer zones)
-  align: "right"      # Column text alignment: "left" | "center" | "right"
-  width: "120px"      # Column width (CSS value: "120px", "15%", "auto")
+  width: "120px"      # Column width (CSS value: "120px", "15%", "auto") — line_items columns only
 ```
-`align` and `width` are most useful on `item_fields` inside `line_items` to control column layout.
+`width` is for `item_fields` inside `line_items` to set column widths.
 `show_label: false` suppresses the label so only the field value appears — common in invoice headers.
+
+**Layout attributes (`align`, `bottom_border`) belong in `layout.defaults` or `section.fields`, not on
+the field definition.** Keeping them on the field only makes sense for `item_fields` (table columns)
+and header/footer zone fields where the layout layer does not apply.
+
+```yaml
+# ✅ Correct — layout attributes in the layout layer
+form:
+  layout:
+    fields:
+      amount:
+        align: right        # default for this field across all sections
+    sections:
+      - id: summary
+        grid: [["amount"]]
+        fields:
+          amount:
+            bottom_border: true   # only in this section
+
+# ❌ Avoid — layout attributes directly on the field
+form:
+  fields:
+    - name: amount
+      type: currency
+      label: Amount
+      align: right          # don't do this for layout-section fields
+      bottom_border: true
+```
 
 ### Field Properties
 ```yaml
@@ -382,6 +409,15 @@ form:
 ```yaml
 form:
   layout:
+    # ── Form-scope layout attributes ──────────────────────────────────────
+    # Per-field layout attrs applied across all sections unless overridden
+    # by section.fields. Keys are field names; values are layout attributes.
+    fields:
+      amount:
+        align: right          # numbers right-aligned everywhere by default
+      notes:
+        label_position: above # label always above for long fields
+
     sections:
       - id: "section_id"
         title: "Section Title"
@@ -392,13 +428,22 @@ form:
           - ["field3"]  # Row with 1 field (full width)
           - ["field4", "field5", "field6"]  # Row with 3 fields
 
+        # ── Per-field layout overrides for this section ────────────────────
+        # Override layout.defaults for specific fields within this section only.
+        # Useful when the same field appears in multiple sections with different styling.
+        fields:
+          field2:
+            align: center
+            bottom_border: true
+
     # Optional responsive breakpoints
     responsive:
       tablet: 2  # Maximum columns per row on tablets
       mobile: 1  # Maximum columns per row on mobile (usually 1)
 
   fields:
-    # Field definitions...
+    # Field definitions — identity only (type, label, required, options, validation)
+    # Do NOT put align or bottom_border here for layout-section fields.
 ```
 
 ### Layout Features
@@ -407,6 +452,31 @@ form:
 2. **Grid Layout**: Control field positioning using a row-based grid system
 3. **Initial Section**: Mark one section with `initial: true` to show it on workflow creation
 4. **Responsive**: Automatically adapts to tablet and mobile screens
+5. **Layout Defaults**: Set default layout attributes per field across all sections via `layout.defaults`
+6. **Section Overrides**: Override layout per field within a specific section via `section.fields`
+
+### Layout Attribute Priority
+
+Layout attributes are resolved in this order (highest priority wins):
+
+```
+section.fields[field_name]  →  layout.fields[field_name]  →  field-level (legacy fallback)
+```
+
+### Layout Attribute Reference
+
+These attributes belong in `layout.defaults` or `section.fields`, not on `form.fields`:
+
+| Attribute | Values | Description |
+|-----------|--------|-------------|
+| `align` | `left` \| `center` \| `right` | Horizontal alignment of the field value in read-only display |
+| `bottom_border` | `true` \| `false` | Full-width border below the field entry — acts as a visual separator |
+| `span` | `full` \| `half` \| `auto` | Grid column span hint |
+| `valign` | `top` \| `middle` \| `bottom` | Vertical alignment |
+| `label_position` | `above` \| `inline` \| `hidden` | Label placement relative to value |
+
+**Exception:** `align` and `width` on `item_fields` inside `line_items` should stay on the field — they
+define table column properties, not section layout.
 
 ### Complete Layout Example
 ```yaml
