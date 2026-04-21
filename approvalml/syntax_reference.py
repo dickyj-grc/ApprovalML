@@ -81,6 +81,11 @@ settings:
 3. ✅ **Step Types:** Use `decision`, `parallel_approval`, `conditional_split`, `automatic`, `notification`, `end`
    - ❌ **DO NOT** use deprecated type: `approval`
 
+4. ✅ **Key Order:** Always output top-level keys in this exact canonical order:
+   `name → description → version → type → triggers → submission_criteria → view_all_roles → form → workflow → settings`
+   - Any additional top-level keys not in this list should appear after `settings`
+   - ❌ **DO NOT** place `form` or `workflow` before `name`/`description`
+
 ## Form Field Types
 
 ### Basic Field Types
