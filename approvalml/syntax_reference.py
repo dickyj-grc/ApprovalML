@@ -21,11 +21,16 @@ description: "Brief description of the workflow"
 version: "1.0"  # Optional
 type: "workflow_type"  # Optional
 
-# Optional submission criteria
+# Optional submission criteria — controls who can SUBMIT the workflow
 submission_criteria:
   company_roles: []  # Array of roles that can submit
   org_hierarchy:
     include_paths: ["1.1.*"]  # Organizational path patterns
+
+# Optional view access — controls who can VIEW ALL submissions in the workflow list
+# Users whose company_roles intersect this list get a "My Requests / All Submissions" toggle
+# Leave empty (or omit) to use default participant-scoped access (requestor + approvers + managers)
+view_all_roles: []  # e.g. ["finance", "admin", "hr"]
 
 # Form definition
 form:
@@ -1834,6 +1839,59 @@ settings:
     policy_check: true
 ```
 
+## Submission Criteria and View Access
+
+### `submission_criteria` — Who Can Submit
+
+Controls which employees can see and submit this workflow. Uses `company_roles` and optional org path filters.
+
+```yaml
+submission_criteria:
+  company_roles: ["employee", "manager"]   # From the company's role list
+  departments: ["Finance", "Accounting"]   # Optional department filter
+  org_hierarchy:
+    include_paths: ["1.1.*"]               # Include path and all descendants
+    exclude_paths: ["1.1.3.*"]             # Exclude specific sub-path
+```
+
+### `view_all_roles` — Who Can View All Submissions
+
+Controls which roles can see **every** submission for this workflow in the list view (not just their own). By default, users only see submissions where they are the requestor, an approver, or a manager in the org hierarchy.
+
+When a user's `company_roles` intersect this list, they get a **"My Requests / All Submissions"** toggle in the workflow list view. This is the correct way to give finance, HR, or audit teams reporting visibility without granting global admin access.
+
+```yaml
+view_all_roles: ["finance", "hr", "admin"]
+```
+
+**When to include `view_all_roles`:**
+- The user mentions finance/accounting needing to see all expense submissions
+- The user mentions HR needing to view all leave requests or performance reviews
+- The user mentions a manager/auditor role needing to export or report on submissions
+- The workflow is an expense, purchase order, leave, or any report-style process
+
+**When to omit `view_all_roles`:**
+- All participants only need to see their own submissions
+- The workflow is highly sensitive (e.g., salary adjustment) and no role should have bulk visibility
+
+**Example — Expense Workflow:**
+```yaml
+name: "Travel Expense Request"
+type: "expense"
+submission_criteria:
+  company_roles: ["employee"]
+view_all_roles: ["finance", "admin"]   # Finance team can export all approved expenses
+```
+
+**Example — Leave Request (no bulk access needed):**
+```yaml
+name: "Leave Request"
+type: "leave"
+submission_criteria:
+  company_roles: ["employee"]
+# view_all_roles omitted — managers see subordinates via org hierarchy naturally
+```
+
 ## Validation Rules for AI Generation
 
 When generating ApprovalML YAML, ensure:
@@ -1864,6 +1922,8 @@ When generating ApprovalML YAML, ensure:
 10. **End Node Best Practice**: For complex workflows with multiple outcomes, use explicit `type: end` nodes instead of `end_workflow: true`
 
 11. **Reserved Keyword**: The step name `initial` is reserved by the system for revision routing. Do NOT create a step named "initial".
+
+12. **view_all_roles**: When generating workflows for expense, purchase, leave, or reporting use cases, consider including `view_all_roles` at the top level to grant the appropriate finance/HR/audit roles bulk visibility over all submissions. Values must be strings matching `company_roles` in the company. Example: `view_all_roles: ["finance", "admin"]`.
 
 ## Workflow Revision Pattern
 

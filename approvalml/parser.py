@@ -1115,6 +1115,13 @@ class ApprovalProcess(BaseModel):
     # Works for query-string params and flat API payloads (no JSONPath needed).
     param_mapping: Optional[dict[str, str]] = None
 
+    # Optional list of company_roles that can view ALL submissions for this workflow.
+    # Users whose company_roles intersect this list get a "My Requests / All Submissions"
+    # toggle in the workflow list view — bypassing the default participant-scoped filter.
+    # e.g. view_all_roles: ["finance", "admin", "hr"]
+    # Leave empty or omit to use default access (requestor + approvers + org managers only).
+    view_all_roles: Optional[list[str]] = None
+
     @model_validator(mode='before')
     @classmethod
     def normalize_form_format(cls, data):
