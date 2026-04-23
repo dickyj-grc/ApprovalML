@@ -40,7 +40,14 @@ class StepType(str, Enum):
     CONDITIONAL_SPLIT = "conditional_split"
     AUTOMATIC = "automatic"  # For API/connector calls only
     NOTIFICATION = "notification"  # For sending notifications
+    SPAWN = "spawn"  # Fan-out: one child workflow instance per line_items row
     END = "end"
+
+
+class SpawnWaitFor(str, Enum):
+    ALL = "all"   # Advance parent after ALL children complete
+    ANY = "any"   # Advance parent after FIRST child completes
+    NONE = "none" # Fire-and-forget: advance parent immediately after spawning
 
 
 class ParallelStrategy(str, Enum):
@@ -240,9 +247,22 @@ class DataSourceParam(BaseModel):
 
 
 class DataSourceConfig(BaseModel):
-    """Data source configuration for dynamic fields - handles both data fetching and response parsing"""
-    source_id: str  # Data source ID (connector_id will be looked up from database)
+    """Data source configuration for dynamic fields - handles both data fetching and response parsing.
+
+    Resolution order at runtime:
+      1. source_id  — stable unique ID (preferred, company-scoped, e.g. src_abc123)
+      2. source_name — human-readable name (portable across companies, fallback)
+    At least one must be provided.
+    """
+    source_id: Optional[str] = None   # Stable unique ID (e.g. src_abc123)
+    source_name: Optional[str] = None  # Human-readable name — portable, fallback when source_id is absent
     params: Optional[list[DataSourceParam]] = None  # Parameters to pass to data source
+
+    @model_validator(mode='after')
+    def require_source_id_or_name(self) -> 'DataSourceConfig':
+        if not self.source_id and not self.source_name:
+            raise ValueError("DataSourceConfig requires 'source_id' or 'source_name'")
+        return self
 
     # Response parsing configuration (how to interpret the data source response)
     object_path: Optional[str] = None  # JSONPath to data array (e.g., "$.data.items"), defaults to root if omitted
@@ -870,7 +890,8 @@ class PageOrientation(str, Enum):
 class PrintConfig(BaseModel):
     """PDF/print settings for this workflow document."""
     orientation: PageOrientation = PageOrientation.PORTRAIT
-    page_size: str = "A4"                  # A4 | Letter | Legal
+    page_size: str = "A4"                  # A4 | A3 | A5 | Letter | Legal | Tabloid
+    margin: Optional[str] = None           # CSS margin applied to all sides, e.g. "8mm" or "10mm 6mm". Defaults to "8mm".
     suppress_auto_header: bool = True      # If True and form.header exists, skip the auto company+title block
     suppress_section_header: bool = False  # If True, hide all section title bars in the PDF
     show_history: bool = True              # Whether to render the Approval History table in the PDF
@@ -878,9 +899,19 @@ class PrintConfig(BaseModel):
     @field_validator('page_size')
     @classmethod
     def validate_page_size(cls, v):
-        allowed = {'A4', 'Letter', 'Legal'}
+        allowed = {'A3', 'A4', 'A5', 'Letter', 'Legal', 'Tabloid'}
         if v not in allowed:
             raise ValueError(f"page_size must be one of: {sorted(allowed)}")
+        return v
+
+    @field_validator('margin')
+    @classmethod
+    def validate_margin(cls, v):
+        if v is None:
+            return v
+        import re
+        if not re.search(r'\d', str(v)):
+            raise ValueError("margin must be a CSS length string, e.g. '8mm', '10mm 6mm'")
         return v
 
 

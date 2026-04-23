@@ -176,7 +176,7 @@ form:
   # OR dynamic options from data source:
   # options:
   #   data_source:
-  #     source_id: "src_xxx"
+  #     source_name: "My Source"   # Human-readable name (portable; lookup field for the data source name)
   #     value_field: "id"
   #     label_field: "name"
   #     display: "{name} - {code}"  # Optional template
@@ -319,7 +319,7 @@ All data source configuration is nested under `options.data_source`, with UI beh
   placeholder: "Type at least 3 characters to search..."
   options:
     data_source:
-      source_id: "src_84d12515751c4985"  # Data source unique ID
+      source_name: "Employee Directory"  # Data source name used for lookup — use when sharing YAMLs across companies
       params:
         - name: q
           from_field: field.employee      # Search query parameter
@@ -340,7 +340,7 @@ All data source configuration is nested under `options.data_source`, with UI beh
 ```yaml
 options:
   data_source:
-    source_id: "src_employees"
+    source_name: "Employees"      # Data source name used for lookup
     object_path: "$.data"
     label_field: "full_name"
     display: "{full_name} - {current_department}"
@@ -356,7 +356,7 @@ This allows formulas to access all fields: `${employee.current_department}`, `${
 ```yaml
 options:
   data_source:
-    source_id: "src_employees"
+    source_name: "Employees"      # Data source name used for lookup
     object_path: "$.data"
     value_field: "id"                     # Extract and store only this field
     label_field: "full_name"
@@ -370,7 +370,7 @@ This stores only the `id` value from the selected object.
 
 **Key Properties:**
 - **Data Source Config** (in `options.data_source`):
-  - `source_id`: Data source unique ID (required)
+  - `source_name`: Data source name used for lookup.
   - `params`: Parameters to pass to data source
   - `object_path`: JSONPath to extract data array (e.g., `$.data`, `$.results.items`)
   - `value_field`: Field to extract and store; if omitted, stores entire object
@@ -1205,7 +1205,7 @@ fetch_iam_data:
   type: "automatic"
   name: "Fetch Current IAM Users"
   data_source:
-    source_id: "src_cff5797288f440d7"  # Data source unique ID (connector is implicit)
+    source_name: "GCP IAM Data Source" # Data source name used for lookup
     save_to: "iam_users_json"           # Save fetched data to this form field
     compare_to_asset: "gcp-iam-baseline"  # Optional: compare with asset baseline
     save_diff_to: "deepdiff_gcs"        # Optional: save diff result to this field
@@ -1215,7 +1215,7 @@ fetch_iam_data:
 ```
 
 **Data Source Properties:**
-- `source_id`: Unique ID of the data source (e.g., `src_xxx`) - **Required** (connector is resolved automatically)
+- `source_name`: Human-readable name of the data source - **Portable alternative** (use when sharing YAMLs across companies; resolved via name lookup; ambiguous if duplicate names exist)
 - `save_to`: Form field name to store fetched data - **Required**
 - `compare_to_asset`: Asset name to compare fetched data against (uses deepdiff)
 - `save_diff_to`: Form field to store the diff result string (`"None"` if no changes, or descriptive summary)
@@ -1401,11 +1401,11 @@ directly onto each row before `field_mapping` runs. No extra steps, no JSONata, 
 fetch_invoice_lines:
   type: automatic
   data_source:
-    source_id: src_invoice_lines
+    source_name: src_invoice_lines
     save_to: invoice_lines
     join:
       - field: tax_ids         # field on each row (scalar int or array of ints)
-        source_id: src_tax_api # connector source to batch-fetch related records from
+        source_name: src_tax_api # connector source to batch-fetch related records from
         on: id                 # key field in join records to match against (default: "id")
         pick: name             # value field to extract from each matched record (default: "name")
         as: tax_name           # output field written onto each enriched row
@@ -1429,11 +1429,11 @@ fetch_invoice_lines:
 fetch_invoice_lines:
   type: automatic
   data_source:
-    source_id: src_invoice_lines
+    source_name: src_invoice_lines
     save_to: invoice_lines
     join:
       - field: tax_ids
-        source_id: src_tax_api
+        source_name: src_tax_api
         on: id
         pick:                  # dict: output_field_name: source_field_name
           tax_name: name       # row.tax_name ← matched_record.name
@@ -1458,7 +1458,8 @@ fetch_invoice_lines:
 | Field | Required | Default | Description |
 |-------|----------|---------|-------------|
 | `field` | ✅ Yes | — | Field on each fetched row that holds the FK ID(s) |
-| `source_id` | ✅ Yes | — | Connector source to batch-fetch related records from |
+| `source_id` | ✅ One of | — | Stable unique ID of the connector source for batch-fetch (e.g. `src_xxx`, company-scoped) |
+| `source_name` | ✅ One of | — | Human-readable connector source name — portable across companies; fallback when `source_id` is absent |
 | `as` | ✅ when `pick` is a string | — | Output field written onto each enriched row |
 | `on` | ❌ No | `"id"` | Key field in the join source records to match against |
 | `pick` | ❌ No | `"name"` | String (single field) or dict `{output: source}` (multiple fields) |
@@ -1468,7 +1469,7 @@ fetch_invoice_lines:
 
 **Key behaviours:**
 - Multiple join entries can be listed under `join:` to resolve several FK fields in one step.
-  Each entry makes one batch API call to its `source_id`.
+  Each entry makes one batch API call to its `source_name`.
 - `pick` as a dict extracts multiple fields from the **same** API call — no extra network requests.
 - All joins run before `field_mapping`, so resolved names are available immediately.
 - Array FKs (`tax_ids: [49, 50]`) produce `"Included PPN, GST 10%"` (string) or
@@ -1494,7 +1495,7 @@ existing YAML keys:
 fetch_lines:
   type: automatic
   data_source:
-    source_id: src_invoice_lines
+    source_name: src_invoice_lines
     save_to: lines_raw
   field_mapping:
     tax_ids:
@@ -1506,7 +1507,7 @@ fetch_lines:
 fetch_tax_names:
   type: automatic
   data_source:
-    source_id: src_tax_api
+    source_name: src_tax_api
     params:
       - name: ids
         from_field: field.tax_ids
@@ -1634,7 +1635,51 @@ notify_completion:
 - `role: "finance_team"` - All users with this role
 - `user_id: 123` - Specific user by ID
 
-### 6. End Step (`end`)
+### 6. Spawn Step (`spawn`)
+**For fan-out sub-workflow execution.** Creates one child workflow instance per row in a `line_items` field, then fans back in when the required number of children complete.
+
+```yaml
+process_vendor_invoices:
+  type: "spawn"
+  name: "Process Each Vendor Invoice"
+  workflow: "vendor-invoice-approval"  # Child workflow name to spawn
+  items: "line_items"                  # Form field containing the array of rows
+  wait_for: "all"                      # Fan-in strategy: "all" | "any" | "none"
+  pass:                                # Fields from parent to copy into child request_data
+    - "department"
+    - "requested_by"
+  map:                                 # Per-row field mappings (row fields → child field names)
+    vendor_name: "vendor"
+    invoice_amount: "amount"
+    invoice_date: "date"
+  on_complete:
+    continue_to: "final_review"
+  on_failure:
+    continue_to: "escalation"
+```
+
+**Fan-in Strategies (`wait_for`):**
+- `all` *(default)* — parent advances only when **every** child instance has completed
+- `any` — parent advances as soon as **at least one** child completes
+- `none` — fire-and-forget; parent advances immediately after spawning all children
+
+**Field Mapping (`pass` and `map`):**
+- `pass`: List of top-level field names to copy verbatim from the parent into each child's `request_data`
+- `map`: Dict of `row_field: child_field` — values come from each individual line item row
+
+**Test Mode Behavior:**
+In test mode (instance metadata `is_test_mode: true`), the spawn step logs what it *would* spawn without creating real child instances. The coordinator step is immediately approved and `on_complete` routing is followed.
+
+**Key Properties:**
+- `workflow`: Name of the child workflow to spawn — **Required**
+- `items`: Name of the form field (array of objects) to iterate — **Required**
+- `wait_for`: Fan-in strategy (`all` | `any` | `none`) — default `all`
+- `pass`: List of parent field names to copy into each child
+- `map`: Dict mapping row fields to child request_data field names
+- `on_complete`: Routing when fan-in threshold is met
+- `on_failure`: Routing when any child is rejected/failed (for `all` strategy)
+
+### 7. End Step (`end`)
 Explicit workflow termination nodes. **RECOMMENDED** for complex workflows with multiple outcomes:
 
 ```yaml
@@ -2152,7 +2197,8 @@ The `print` section controls how the workflow document is rendered as a PDF.
 ```yaml
 print:
   orientation: portrait         # portrait (default) | landscape
-  page_size: A4                 # A4 (default) | Letter | Legal
+  page_size: A4                 # A4 (default) | A3 | A5 | Letter | Legal | Tabloid
+  margin: "8mm"                 # CSS margin for all sides (default: "8mm"). Accepts "10mm", "10mm 6mm", etc.
   suppress_auto_header: true    # true (default) — if form.header exists, skip the auto company+title block
   suppress_section_header: false # false (default) — when true, hides all section title bars in the PDF
   show_history: true            # true (default) — render the Approval History table at the end
@@ -2163,7 +2209,8 @@ print:
 | Field | Default | Description |
 |---|---|---|
 | `orientation` | `portrait` | Page orientation for PDF output |
-| `page_size` | `A4` | Paper size — A4, Letter, or Legal |
+| `page_size` | `A4` | Paper size — A4, A3, A5, Letter, Legal, or Tabloid |
+| `margin` | `"8mm"` | CSS page margin applied to all four sides. Accepts any CSS length: `"8mm"`, `"10mm"`, `"10mm 6mm"` (vertical horizontal) |
 | `suppress_auto_header` | `true` | When `true` and the workflow has a `form.header`, the system title block (company name + workflow title) is omitted to avoid duplication with the custom header |
 | `suppress_section_header` | `false` | When `true`, all section title bars (dark heading rows) are hidden in the PDF — useful for clean invoice layouts |
 | `show_history` | `true` | When `false`, the Approval History / chronology table is not included in the PDF |
@@ -2219,7 +2266,7 @@ FIELD_TYPES = {
         "validation": ["required"],
         "optional_props": ["search", "placeholder"],
         "search_props": ["min_length", "debounce_ms", "max_results"],
-        "data_source_props": ["source_id", "params", "object_path", "value_field", "label_field", "display"],
+        "data_source_props": ["source_name", "params", "object_path", "value_field", "label_field", "display"],
         "value_type": "dynamic",  # Can be string (ID) or object depending on configuration
         "value_type_rules": {
             # If value_field is NOT set in options.data_source, stores entire object
@@ -2316,7 +2363,7 @@ STEP_TYPES = {
             "e.g. { product_name: { source: '$.product.name', jsonata: '$replace(value, /\\\\[\\\\d+\\\\]\\\\s*/, \"\")' } }"
         ),
         "data_source_props": {
-            "required": ["source_id", "save_to"],
+            "required": ["source_name", "save_to"],
             "optional": ["compare_to_asset", "save_diff_to", "ignore_keys", "field_mapping"]
         },
         "asset_props": {
@@ -2326,6 +2373,17 @@ STEP_TYPES = {
     "notification": {
         "required_props": ["recipients", "notification", "on_complete"],
         "optional_props": []
+    },
+    "spawn": {
+        "required_props": ["workflow", "items"],
+        "optional_props": ["wait_for", "pass", "map", "on_complete", "on_failure"],
+        "description": (
+            "Fan-out step that creates one child workflow instance per row in a line_items field. "
+            "The parent workflow waits for child instances to complete based on 'wait_for' strategy: "
+            "'all' (default) — wait for every child; 'any' — advance on first approved child; "
+            "'none' — fire-and-forget, parent advances immediately. "
+            "Field wiring priority: explicit 'map' > named 'pass' list > auto-match by field name."
+        )
     },
     "end": {
         "required_props": [],
