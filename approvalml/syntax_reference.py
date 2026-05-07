@@ -1157,23 +1157,95 @@ triage_step:
 ```
 
 ### 2. Parallel Approval (`parallel_approval`)
-Multiple approvers working simultaneously:
+Multiple approvers working simultaneously. Three completion strategies are supported.
+
+#### Strategy: `all` — Every approver must sign/approve
+
+Each approver can have its own `signature_field` (or inherit the step-level one):
 
 ```yaml
-parallel_step:
-  name: "parallel_step"
+board_sign_off:
+  name: "board_sign_off"
   type: "parallel_approval"
-  description: "Multiple Approvers"
+  approval_strategy: "all"
+  signature_field: "shared_sig"   # Step-level fallback for approvers without their own
   approvers:
-    - role: "purchasing_officer_1"
-    - role: "purchasing_officer_2"
-    - role: "purchasing_officer_3"
-  approval_strategy: "any_one" | "all" | "majority"
+    - role: "${requestor.manager}"
+      approval_type: needs_to_sign
+      signature_field: "manager_sig"   # Per-approver override
+    - role: "${requestor.department_head}"
+      approval_type: needs_to_sign
+      signature_field: "dept_head_sig" # Per-approver override
+    - role: "cfo"
+      approval_type: needs_to_approve  # No signature required for this approver
   on_approve:
-    continue_to: "NextStepName"
+    continue_to: "next_step"
   on_reject:
     end_workflow: true
 ```
+
+#### Strategy: `any_one` — First approver to act wins
+
+All approvers share one step-level `signature_field` (per-approver override still works):
+
+```yaml
+quick_approval:
+  name: "quick_approval"
+  type: "parallel_approval"
+  approval_strategy: "any_one"
+  signature_field: "approver_sig"   # Whichever approver acts signs this field
+  approvers:
+    - role: "${requestor.manager}"
+    - role: "${requestor.department_head}"
+  on_approve:
+    continue_to: "next_step"
+  on_reject:
+    end_workflow: true
+```
+
+#### Strategy: `majority` — More than half (or `required_count`) must approve
+
+Use `required_count` to set an explicit quorum instead of the auto-calculated majority:
+
+```yaml
+committee_vote:
+  name: "committee_vote"
+  type: "parallel_approval"
+  approval_strategy: "majority"
+  required_count: 3     # Optional: require exactly 3 of 5; omit for auto (floor(n/2)+1)
+  signature_field: "committee_sig"  # Step-level shared signature field
+  approvers:
+    - role: "committee_member_1"
+      approval_type: needs_to_sign
+    - role: "committee_member_2"
+      approval_type: needs_to_sign
+    - role: "committee_member_3"
+      approval_type: needs_to_sign
+    - role: "committee_member_4"
+      approval_type: needs_to_sign
+    - role: "committee_member_5"
+      approval_type: needs_to_sign
+  on_approve:
+    continue_to: "next_step"
+  on_reject:
+    end_workflow: true
+```
+
+**`signature_field` Resolution Rules:**
+
+| Strategy | Per-approver `signature_field` | Step-level `signature_field` |
+|----------|-------------------------------|------------------------------|
+| `all` | Used when set on the approver entry | Falls back to step-level for approvers without one |
+| `any_one` | Used when set on the approver entry | Falls back to step-level (shared; whichever acts first) |
+| `majority` | Used when set on the approver entry | Falls back to step-level for approvers without one |
+
+**Approver entry fields:**
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `role` | ✅ | Role name or dynamic reference (`${requestor.manager}`) |
+| `approval_type` | ❌ | One of the approval types (default: `needs_to_approve`) |
+| `signature_field` | ❌ | Per-approver signature form field name; overrides step-level `signature_field` |
 
 ### 3. Conditional Split (`conditional_split`)
 Dynamic routing based on form data:
@@ -2344,7 +2416,7 @@ STEP_TYPES = {
     },
     "parallel_approval": {
         "required_props": ["approvers", "approval_strategy"],
-        "optional_props": ["signature_field", "on_approve", "on_reject", "timeout", "view_sections", "edit_sections"]
+        "optional_props": ["signature_field", "required_count", "on_approve", "on_reject", "timeout", "view_sections", "edit_sections"]
     },
     "conditional_split": {
         "required_props": ["choices"],

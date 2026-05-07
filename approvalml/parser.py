@@ -53,6 +53,7 @@ class SpawnWaitFor(str, Enum):
 class ParallelStrategy(str, Enum):
     ANY_ONE = "any_one"
     ALL = "all"
+    MAJORITY = "majority"
 
 
 class ApprovalType(str, Enum):
@@ -565,6 +566,7 @@ class ApproverConfig(BaseModel):
     approval_type: ApprovalType = ApprovalType.NEEDS_TO_APPROVE
     sla_hours: Optional[int] = None
     can_edit_fields: Optional[list[str]] = None
+    signature_field: Optional[str] = None  # Per-approver signature form field name (overrides step-level)
 
     @model_validator(mode='before')
     @classmethod
