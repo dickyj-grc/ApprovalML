@@ -86,6 +86,59 @@ settings:
    - Any additional top-level keys not in this list should appear after `settings`
    - ❌ **DO NOT** place `form` or `workflow` before `name`/`description`
 
+## Triggers (Optional)
+
+Use `triggers` when the workflow is started automatically — by a schedule or an incoming event — rather than manually by a user.
+Omit `triggers` entirely for workflows that users submit through the form UI.
+
+### Trigger Types
+
+#### `cron` — Scheduled execution
+Runs the workflow automatically on a schedule. `schedule` is a standard 5-field cron expression.
+
+```yaml
+triggers:
+  - type: cron
+    schedule: "0 * * * *"   # every hour on the hour
+```
+
+Common cron expressions:
+| Schedule            | Expression        |
+|---------------------|-------------------|
+| Every hour          | `0 * * * *`       |
+| Every 30 minutes    | `*/30 * * * *`    |
+| Daily at 9 AM       | `0 9 * * *`       |
+| Every Monday 9 AM   | `0 9 * * 1`       |
+| First of month      | `0 0 1 * *`       |
+| Every 6 hours       | `0 */6 * * *`     |
+
+#### `webhook` — Event-driven execution
+Starts the workflow when an external system sends an HTTP request (e.g. an alert, a data push).
+No `schedule` field is used.
+
+```yaml
+triggers:
+  - type: webhook
+```
+
+#### Combined — triggered by either
+```yaml
+triggers:
+  - type: cron
+    schedule: "0 * * * *"
+  - type: webhook
+```
+
+### When to use triggers
+
+- User says "every hour", "daily", "nightly", "weekly", "every Monday", "on a schedule" → `type: cron`
+- User says "when an event occurs", "when data arrives", "via API", "incoming webhook" → `type: webhook`
+- User says nothing about scheduling or events (manual form submission) → **omit** triggers entirely
+
+### Cron workflows and form fields
+
+When a workflow is cron-triggered, the form fields receive their values from automatic steps (data source fetches), not from user input. Design the form to hold the data that automatic steps will populate, with `type: textarea` or `type: hidden` for computed fields.
+
 ## Form Field Types
 
 ### Basic Field Types
