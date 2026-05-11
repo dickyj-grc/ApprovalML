@@ -137,7 +137,7 @@ triggers:
 
 ### Cron workflows and form fields
 
-When a workflow is cron-triggered, the form fields receive their values from automatic steps (data source fetches), not from user input. Design the form to hold the data that automatic steps will populate, with `type: textarea` or `type: hidden` for computed fields.
+When a workflow is cron-triggered, the form fields receive their values from automatic steps (data source fetches), not from user input. Use `type: textarea` for fields approvers should see, and `type: text` with `hidden: true` for intermediate computed values that only workflow logic reads.
 
 ## Form Field Types
 
@@ -157,7 +157,7 @@ When a workflow is cron-triggered, the form fields receive their values from aut
 - `file_upload` - File attachment (supports `capture: "camera"` for mobile camera)
 - `signature` - Digital signature capture (drawing or saved signature)
 - `richtext` - Rich text editor (WYSIWYG) with HTML and image support
-- `hidden` - Hidden field for storing metadata or computed values
+- `hidden` - **Deprecated.** Use `type: text` with `hidden: true` instead (see Field Properties below)
 - `line_items` - Dynamic table with repeating rows
 - `autocomplete` - Search-as-you-type field with data source integration
 - `autonumber` - Auto-incrementing sequential number (e.g. EXP-00042). Read-only; generated at submission. Supports `prefix` and `pad_length`.
@@ -236,6 +236,21 @@ form:
 
   # Currency fields - optional currency code
   currency: "USD"              # Optional: ISO currency code (USD, EUR, JPY, etc.)
+
+  # Visibility control
+  hidden: true      # invisible in the UI; value is still in form data and available to workflow logic
+  print_only: true  # shown in PDF only; hidden in the web form
+```
+
+**`hidden: true`** — use for fields that automatic steps write into and workflow conditions read, but approvers do not need to see. Must be `type: text` or `type: textarea`.
+
+**`print_only: true`** — use for fields that should appear in the PDF document but not in the form UI.
+
+```yaml
+- name: "weather_raw"
+  type: text
+  label: "Weather Data"
+  hidden: true
 ```
 
 ### Field Style Property
@@ -1712,6 +1727,12 @@ fetch_invoice_data:
 - Missing paths are skipped with warnings logged
 - Errors don't block workflow execution (fault-tolerant)
 - Can be combined with `data_source` or `resource` on the same step
+
+**JSONPath root when `data_source` and `field_mapping` are on the same step:**
+When a step has both `data_source` (with `save_to`) and `field_mapping`, the JSONPath expressions are evaluated against the raw API response object — **not** against `request_data`.
+- For a single-object API response (e.g. WeatherAPI returns `{"location":…, "current":…}`), write paths starting from that object: `$.location.name`, `$.current.temp_c`
+- For a multi-record API response, the source is the array: write `$[0].field` or use JSONata
+- A standalone `field_mapping` step (no `data_source`) still reads from `request_data` as before
 
 **Error Handling:**
 - JSONPath not found: Field skipped, warning logged

@@ -303,6 +303,7 @@ class FormField(BaseModel):
 
     # Calculated field support
     readonly: Optional[bool] = None
+    hidden: Optional[bool] = None       # If True, field is invisible in the UI but included in form data
     print_only: Optional[bool] = None   # If True, field is shown in PDF only; hidden in the web form
     calculated: Optional[bool] = None
     formula: Optional[str] = None
