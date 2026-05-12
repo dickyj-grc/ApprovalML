@@ -1204,6 +1204,30 @@ supervisor_approval:
 
 **Note:** For more complex notifications (multiple recipients, custom formatting), use a dedicated `type: notification` step instead.
 
+#### Email Link Authentication (`require_login`)
+By default, approval notification emails contain a **public token link** that lets the approver act (approve/reject) without logging in — useful for external or occasional approvers.
+
+Set `require_login: true` on a decision step to send an authenticated link instead (requires the approver to be logged in):
+
+```yaml
+sensitive_approval:
+  name: "Sensitive Approval"
+  type: "decision"
+  approver: "${requestor.manager}"
+  require_login: true   # email link → /requests/{id} (login required)
+  on_approve:
+    continue_to: "next_step"
+  on_reject:
+    end_workflow: true
+```
+
+**When to use `require_login: true`:**
+- High-security decisions where you want to enforce authentication
+- Steps where MFA or SSO policies should apply before acting
+- Internal approvals where all approvers always have accounts
+
+**Default behaviour (omit or `false`):** email contains a `/public-approvals/{token}` link — approver clicks → approves/rejects directly, no login required.
+
 #### Multi-Outcome Decision
 Use any number of `on_<action>` keys to define custom outcomes.
 ```yaml
@@ -2486,7 +2510,7 @@ FIELD_TYPES = {
 STEP_TYPES = {
     "decision": {
         "required_props": ["approver"],
-        "optional_props": ["approval_type", "signature_field", "on_approve", "on_reject", "timeout", "view_sections", "edit_sections"]
+        "optional_props": ["approval_type", "signature_field", "require_login", "on_approve", "on_reject", "timeout", "view_sections", "edit_sections"]
     },
     "parallel_approval": {
         "required_props": ["approvers", "approval_strategy"],

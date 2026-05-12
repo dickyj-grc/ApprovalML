@@ -769,6 +769,11 @@ class WorkflowStep(BaseModel):
     # before the approver's action is accepted.
     signature_field: Optional[str] = None
 
+    # When True, the approval email link requires the approver to log in first
+    # (sends /requests/{id} instead of a public token URL).
+    # Default: False — public token link, no login required.
+    require_login: Optional[bool] = False
+
     # Field mapping for automatic steps that receive a webhook payload.
     # Keys are form field names; values are either:
     # - Simple string: JSONPath expression for scalar fields
