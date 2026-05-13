@@ -2410,6 +2410,7 @@ FIELD_TYPES = {
     "number": {"validation": ["min_value", "max_value", "step"]},
     "currency": {"validation": ["min", "max", "min_value", "max_value"], "optional_props": ["currency"]},
     "date": {"validation": ["min_date", "max_date"]},
+    "datetime": {"validation": ["min_date", "max_date"]},
     "dropdown": {
         "validation": ["required"],
         "optional_props": ["options", "data_source", "lookup"],
