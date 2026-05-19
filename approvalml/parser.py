@@ -307,6 +307,7 @@ class FormField(BaseModel):
     print_only: Optional[bool] = None   # If True, field is shown in PDF only; hidden in the web form
     calculated: Optional[bool] = None
     formula: Optional[str] = None
+    jsonata: Optional[str] = None       # JSONata expression evaluated server-side (alternative to formula)
 
     # Currency field support
     currency: Optional[str] = None  # Currency code (e.g., "USD", "IDR", "EUR")
@@ -364,6 +365,8 @@ class FormField(BaseModel):
         """label is optional only for type: label — all other types must supply it."""
         if self.type != FieldType.LABEL and not self.label:
             raise ValueError(f"Field '{self.name or '?'}': label is required for type '{self.type.value}'")
+        if self.formula and self.jsonata:
+            raise ValueError(f"Field '{self.name or '?'}': cannot specify both 'formula' and 'jsonata' — use one or the other")
         return self
 
     @field_validator('text_style')

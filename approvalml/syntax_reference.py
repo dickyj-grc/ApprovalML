@@ -373,6 +373,46 @@ For `file_upload` fields, you can force the use of the device camera for capturi
       formula: "quantity * unit_price"
 ```
 
+#### Calculated Fields with JSONata (Top-Level Form Fields)
+Use `calculated: true` with `jsonata` instead of `formula` when you need cross-collection
+aggregations or expressions that go beyond simple arithmetic. The JSONata expression receives
+the full form data object and is evaluated server-side on every automatic step.
+
+**Common use case — sum a line_items column:**
+```yaml
+- name: "total_purchase_amount"
+  type: "currency"
+  label: "Total Purchase Amount"
+  readonly: true
+  calculated: true
+  jsonata: "$sum(items_to_purchase[].total)"
+```
+
+**Other examples:**
+```yaml
+# Count line items
+- name: "item_count"
+  type: "number"
+  label: "Total Items"
+  readonly: true
+  calculated: true
+  jsonata: "$count(items_to_purchase)"
+
+# Conditional label
+- name: "urgency_label"
+  type: "text"
+  label: "Priority"
+  readonly: true
+  calculated: true
+  jsonata: "total_purchase_amount > 10000 ? 'High Value' : 'Standard'"
+```
+
+**Rules:**
+- `jsonata` and `formula` are mutually exclusive — use one or the other, never both
+- Fields with `jsonata` are system-computed: they are skipped in form validation and never required from the user
+- The expression receives the full `request_data` object (all form field values)
+- Use `$sum(array[].field)` to aggregate line item columns
+
 #### Autocomplete Field (Search with Data Source)
 Autocomplete fields provide search-as-you-type functionality with data source integration.
 
