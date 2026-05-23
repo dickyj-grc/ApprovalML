@@ -1268,6 +1268,38 @@ sensitive_approval:
 
 **Default behaviour (omit or `false`):** email contains a `/public-approvals/{token}` link — approver clicks → approves/rejects directly, no login required.
 
+#### Step SLA (`sla`)
+Set a time-based SLA target for a step using a human-readable duration string. The engine tracks whether the approver acted within the target and includes this in SLA compliance reports.
+
+```yaml
+finance_approval:
+  name: "Finance Approval"
+  type: "decision"
+  approver: "${requestor.manager}"
+  sla: "4h"          # Must act within 4 hours
+  on_approve:
+    continue_to: "done"
+  on_reject:
+    end_workflow: true
+```
+
+**Supported duration units:**
+
+| Unit | Meaning   | Example  |
+|------|-----------|----------|
+| `ms` | milliseconds | `500ms` |
+| `s`  | seconds   | `30s`   |
+| `m`  | minutes   | `10m`   |
+| `h`  | hours     | `4h`    |
+| `d`  | days      | `2d`    |
+| `w`  | weeks     | `1w`    |
+| `M`  | months (~30d) | `1M` |
+| `y`  | years (~365d) | `1y` |
+
+Compound values are supported: `"1h30m"`, `"2d4h"`.
+
+**Backwards compatibility:** `sla_hours: 4` (plain number) is still accepted but deprecated. Use `sla: "4h"` going forward.
+
 #### Multi-Outcome Decision
 Use any number of `on_<action>` keys to define custom outcomes.
 ```yaml
@@ -2551,11 +2583,11 @@ FIELD_TYPES = {
 STEP_TYPES = {
     "decision": {
         "required_props": ["approver"],
-        "optional_props": ["approval_type", "signature_field", "require_login", "on_approve", "on_reject", "timeout", "view_sections", "edit_sections"]
+        "optional_props": ["approval_type", "signature_field", "require_login", "on_approve", "on_reject", "timeout", "sla", "sla_hours", "view_sections", "edit_sections"]
     },
     "parallel_approval": {
         "required_props": ["approvers", "approval_strategy"],
-        "optional_props": ["signature_field", "required_count", "on_approve", "on_reject", "timeout", "view_sections", "edit_sections"]
+        "optional_props": ["signature_field", "required_count", "on_approve", "on_reject", "timeout", "sla", "sla_hours", "view_sections", "edit_sections"]
     },
     "conditional_split": {
         "required_props": ["choices"],

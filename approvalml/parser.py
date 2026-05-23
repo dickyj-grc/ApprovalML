@@ -568,7 +568,8 @@ class ApproverConfig(BaseModel):
     dynamic_approver: Optional[str] = None  # Template like ${requestor.supervisor}
     role: Optional[str] = None  # Role-based assignment
     approval_type: ApprovalType = ApprovalType.NEEDS_TO_APPROVE
-    sla_hours: Optional[int] = None
+    sla: Optional[str] = None          # Human duration: "4h", "10m", "2d", "1h30m"
+    sla_hours: Optional[float] = None  # Deprecated — use sla instead; kept for backwards compat
     can_edit_fields: Optional[list[str]] = None
     signature_field: Optional[str] = None  # Per-approver signature form field name (overrides step-level)
 
@@ -576,6 +577,11 @@ class ApproverConfig(BaseModel):
     @classmethod
     def check_approver_fields(cls, data: Any) -> Any:
         if isinstance(data, dict):
+            # Normalise sla duration string → sla_hours float
+            if 'sla' in data and data['sla'] is not None:
+                from .duration import parse_sla_duration
+                data = dict(data)
+                data['sla_hours'] = parse_sla_duration(data.pop('sla'))
             approver_fields = ['approver', 'dynamic_approver', 'role']
             provided_fields = [field for field in approver_fields if data.get(field) is not None]
             if len(provided_fields) != 1:
@@ -755,7 +761,17 @@ class WorkflowStep(BaseModel):
 
     # Timing
     timeout: Optional[str] = None  # e.g., "48_hours", "5_business_days"
-    sla_hours: Optional[int] = None
+    sla: Optional[str] = None          # Human duration: "4h", "10m", "2d", "1h30m"
+    sla_hours: Optional[float] = None  # Deprecated — use sla; kept for backwards compat
+
+    @model_validator(mode='before')
+    @classmethod
+    def _normalise_sla(cls, data: Any) -> Any:
+        if isinstance(data, dict) and 'sla' in data and data['sla'] is not None:
+            from .duration import parse_sla_duration
+            data = dict(data)
+            data['sla_hours'] = parse_sla_duration(data.pop('sla'))
+        return data
 
     # Integration
     webhook_url: Optional[str] = None
