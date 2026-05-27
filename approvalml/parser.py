@@ -1053,6 +1053,8 @@ class TriggerConfig(BaseModel):
     type: TriggerType
     schedule: Optional[str] = None                          # Cron expression (required for cron type)
     max_runs: Optional[int] = None                          # Maximum number of executions (null = unlimited)
+    allow_concurrent: Optional[bool] = None                 # If False (default), skip run when previous instance is still in_progress.
+                                                            # Set True only when overlapping runs are intentional (e.g. independent daily reports).
     data_condition: Optional[DataConditionConfig] = None    # Optional data-driven condition
     preset_form_data: Optional[dict[str, Any]] = None       # Auto-fill form fields by name match
     requestor_email: Optional[str] = None                   # Employee email to act as requestor

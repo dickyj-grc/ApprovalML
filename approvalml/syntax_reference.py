@@ -136,6 +136,7 @@ triggers:
 | `type` | ✅ Yes | `cron`, `webhook`, or `one_time` |
 | `schedule` | For `cron`/`one_time` | Cron expression, e.g. `0 9 * * *` for daily 9 AM |
 | `max_runs` | No | Auto-pause after N executions |
+| `allow_concurrent` | No | `false` (default) — skip run if a previous instance from this trigger is still in progress. Set `true` to allow overlap. |
 | `preset_form_data` | No | Static form values to inject on launch |
 | `requestor_email` | No | Email of the employee to treat as submitter |
 | `requestor_company_role` | No | **Recommended for scheduled workflows** — the first active employee with this `company_role` becomes the submitter |
@@ -162,6 +163,33 @@ triggers:
 - The resolved requestor ID is stamped in the instance's metadata for audit purposes.
 
 **Resolution priority:** `requestor_id` → `requestor_email` → `requestor_company_role` → `workflow.created_by`
+
+### Concurrency Control (`allow_concurrent`)
+
+By default, if a previous instance started by this trigger is still `in_progress`, the next scheduled run is **skipped** to prevent double-execution. This is the safe default for workflows that must not overlap (payroll, compliance audits, sequential reporting).
+
+```yaml
+triggers:
+  - type: cron
+    schedule: "0 9 * * 1"   # Every Monday 9 AM
+    # allow_concurrent: false  ← this is the default; omitting it is equivalent
+```
+
+Set `allow_concurrent: true` when each run is fully independent and overlapping executions are intentional:
+
+```yaml
+triggers:
+  - type: cron
+    schedule: "0 * * * *"   # Every hour
+    allow_concurrent: true   # Each hourly snapshot is independent — overlap is fine
+```
+
+**Skipped runs do not delay future runs** — the cron schedule advances normally regardless.
+
+**When NOT to set `allow_concurrent: true`:**
+- Payroll, billing, or financial workflows (double-run = duplicate charges)
+- Sequential review processes where the next run depends on the prior outcome
+- Any workflow that modifies shared state or sends external notifications on completion
 
 ### When to use triggers
 
