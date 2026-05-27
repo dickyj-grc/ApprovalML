@@ -794,7 +794,7 @@ fetch_iam_data:
   data_source:
     source_id: "src_cff5797288f440d7"  # Data source unique ID (connector is implicit)
     save_to: "iam_users_json"           # Save fetched data to this form field
-    compare_to_resource: "gcp-iam-baseline"  # Optional: compare with resource baseline
+    compare_to_asset: "gcp-iam-baseline"  # Optional: compare with resource baseline
     save_diff_to: "deepdiff_gcs"        # Optional: save diff result to this field
     ignore_keys: []                     # Optional: keys to ignore in comparison
   on_complete:
@@ -804,7 +804,7 @@ fetch_iam_data:
 **Data Source Properties:**
 - `source_id`: Unique ID of the data source (e.g., `src_xxx`) - **Required** (connector is resolved automatically)
 - `save_to`: Form field name to store fetched data - **Required**
-- `compare_to_resource`: Resource name to compare fetched data against (uses deepdiff)
+- `compare_to_asset`: Resource name to compare fetched data against (uses deepdiff)
 - `save_diff_to`: Form field to store the diff result string (`"None"` if no changes, or descriptive summary)
 - `ignore_keys`: List of top-level keys to exclude from comparison
 
