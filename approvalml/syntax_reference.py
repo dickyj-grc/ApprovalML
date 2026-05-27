@@ -1502,7 +1502,7 @@ Fetch data from a configured data source and optionally compare against a baseli
 fetch_iam_data:
   type: "automatic"
   name: "Fetch Current IAM Users"
-  data_source:
+  data_processor:
     source_name: "GCP IAM Data Source" # Data source name used for lookup
     save_to: "iam_users_json"           # Save fetched data to this form field
     compare_to_asset: "gcp-iam-baseline"  # Optional: compare with asset baseline
@@ -1513,11 +1513,33 @@ fetch_iam_data:
 ```
 
 **Data Source Properties:**
-- `source_name`: Human-readable name of the data source - **Portable alternative** (use when sharing YAMLs across companies; resolved via name lookup; ambiguous if duplicate names exist)
-- `save_to`: Form field name to store fetched data - **Required**
+- `source_id`: Stable unique ID of the data source (preferred — company-scoped, survives renames)
+- `source_name`: Human-readable name — portable across companies; fallback when `source_id` is absent
+- `save_to`: Variable name to store fetched data. Required unless `field_mapping` is used at step level
 - `compare_to_asset`: Asset name to compare fetched data against (uses deepdiff)
-- `save_diff_to`: Form field to store the diff result string (`"None"` if no changes, or descriptive summary)
-- `ignore_keys`: List of top-level keys to exclude from comparison
+- `save_diff_to`: Variable to store the diff result string (`"None"` if no changes, or descriptive summary)
+- `ignore_keys`: Top-level keys to exclude from comparison
+
+**Params — source options:**
+- `from_field: field.<name>` — reads a value from a workflow form field or variable
+- `from_asset: <asset-name>` — reads from an asset's `properties` in the asset register
+  - `property: $.last_transaction_id` — JSONPath into `properties` (or plain key name without `$`)
+  - Omit `property` to pass the entire `properties` dict
+- `value: <literal>` — static value hardcoded in the YAML
+
+```yaml
+fetch_new_records:
+  type: automatic
+  data_processor:
+    source_name: "Transactions API"
+    save_to: new_transactions
+    params:
+      - name: since_id
+        from_asset: driftwatch-transactions-checkpoint
+        property: $.last_transaction_id
+      - name: limit
+        value: 500
+```
 
 **Diff Result Format:**
 - If no changes: `"None"` (string, for use in conditional_split)
@@ -1565,7 +1587,7 @@ update_asset:
 - `asset_name`: Name of the asset to update - **Required**
 
 **Test Mode Behavior:**
-- `data_source` (read): Executes normally - data is fetched and compared
+- `data_processor` (read): Executes normally - data is fetched and compared
 - `asset` (write): Logs the action in history but does NOT modify the asset
 
 #### 4c. Field Mapping (Extract and Transform Data)
@@ -1689,7 +1711,7 @@ This enables the **three-pass pattern** for ERP / relational line-item lookups (
 **Inline Join — Resolving Relational ID Fields (Single Step)**
 
 ERP systems like Odoo store relational fields as integer IDs or arrays (e.g. `tax_id: [123, 456]`).
-The `join` key on `data_source` resolves these automatically in a single step — the engine
+The `join` key on `data_processor` resolves these automatically in a single step — the engine
 batch-fetches the related records, builds an in-memory lookup, and writes the resolved name
 directly onto each row before `field_mapping` runs. No extra steps, no JSONata, no `vars`.
 
@@ -1698,7 +1720,7 @@ directly onto each row before `field_mapping` runs. No extra steps, no JSONata, 
 ```yaml
 fetch_invoice_lines:
   type: automatic
-  data_source:
+  data_processor:
     source_name: src_invoice_lines
     save_to: invoice_lines
     join:
@@ -1726,7 +1748,7 @@ fetch_invoice_lines:
 ```yaml
 fetch_invoice_lines:
   type: automatic
-  data_source:
+  data_processor:
     source_name: src_invoice_lines
     save_to: invoice_lines
     join:
@@ -1785,14 +1807,14 @@ Making one API call per row causes N+1 problems. The three-pass pattern solves t
 existing YAML keys:
 
 - **Pass 1** — fetch line items; use `field_mapping` JSONata to collect all unique IDs into a flat list
-- **Pass 2** — batch-fetch display names for those IDs using `data_source` with `from_field` params
-- **Pass 3** — standalone `field_mapping` (no `data_source`) reads saved data + resolves IDs via `vars`
+- **Pass 2** — batch-fetch display names for those IDs using `data_processor` with `from_field` params
+- **Pass 3** — standalone `field_mapping` (no `data_processor`) reads saved data + resolves IDs via `vars`
 
 ```yaml
 # Pass 1: fetch line items, extract unique tax IDs into a flat list
 fetch_lines:
   type: automatic
-  data_source:
+  data_processor:
     source_name: src_invoice_lines
     save_to: lines_raw
   field_mapping:
@@ -1804,7 +1826,7 @@ fetch_lines:
 # Pass 2: batch-fetch tax descriptions using the collected IDs
 fetch_tax_names:
   type: automatic
-  data_source:
+  data_processor:
     source_name: src_tax_api
     params:
       - name: ids
@@ -1813,7 +1835,7 @@ fetch_tax_names:
   on_complete:
     continue_to: map_lines
 
-# Pass 3: standalone field_mapping (no data_source) — reads from request_data via vars
+# Pass 3: standalone field_mapping (no data_processor) — reads from request_data via vars
 map_lines:
   type: automatic
   field_mapping:
@@ -1881,16 +1903,16 @@ fetch_invoice_data:
   - Dict with `jsonata` only: Transform using entire payload
   - Dict with `source` + `item_fields`: Map array to line_items
 - All JSONata expressions receive a `vars` key pointing to the full `request_data` (all data saved by prior steps); use `vars.save_key.field` to reference earlier fetch results
-- A step with only `field_mapping` (no `data_source`) is valid and reads from `request_data` directly — used as Pass 3 in the three-pass lookup pattern
+- A step with only `field_mapping` (no `data_processor`) is valid and reads from `request_data` directly — used as Pass 3 in the three-pass lookup pattern
 - Missing paths are skipped with warnings logged
 - Errors don't block workflow execution (fault-tolerant)
-- Can be combined with `data_source` or `resource` on the same step
+- Can be combined with `data_processor` or `resource` on the same step
 
-**JSONPath root when `data_source` and `field_mapping` are on the same step:**
-When a step has both `data_source` (with `save_to`) and `field_mapping`, the JSONPath expressions are evaluated against the raw API response object — **not** against `request_data`.
+**JSONPath root when `data_processor` and `field_mapping` are on the same step:**
+When a step has both `data_processor` (with `save_to`) and `field_mapping`, the JSONPath expressions are evaluated against the raw API response object — **not** against `request_data`.
 - For a single-object API response (e.g. WeatherAPI returns `{"location":…, "current":…}`), write paths starting from that object: `$.location.name`, `$.current.temp_c`
 - For a multi-record API response, the source is the array: write `$[0].field` or use JSONata
-- A standalone `field_mapping` step (no `data_source`) still reads from `request_data` as before
+- A standalone `field_mapping` step (no `data_processor`) still reads from `request_data` as before
 
 **Error Handling:**
 - JSONPath not found: Field skipped, warning logged
@@ -2657,8 +2679,8 @@ STEP_TYPES = {
     },
     "automatic": {
         "required_props": ["on_complete"],
-        "optional_props": ["api", "data_source", "asset", "field_mapping", "on_failure"],
-        "requires_one_of": ["api", "data_source", "asset", "field_mapping"],
+        "optional_props": ["api", "data_processor", "asset", "field_mapping", "on_failure"],
+        "requires_one_of": ["api", "data_processor", "asset", "field_mapping"],
         "field_mapping_description": (
             "Extracts and transforms values from webhook payloads or API responses into form fields. "
             "Supports three types: (1) Simple JSONPath extraction: { field: '$.path' }, "
@@ -2667,7 +2689,7 @@ STEP_TYPES = {
             "JSONata enables string operations, regex, math, and conditionals. "
             "e.g. { product_name: { source: '$.product.name', jsonata: '$replace(value, /\\\\[\\\\d+\\\\]\\\\s*/, \"\")' } }"
         ),
-        "data_source_props": {
+        "data_processor_props": {
             "required": ["source_name", "save_to"],
             "optional": ["compare_to_asset", "save_diff_to", "ignore_keys", "field_mapping"]
         },

@@ -636,23 +636,19 @@ class ApiConfig(BaseModel):
 class DataSourceParameterMapping(BaseModel):
     """Parameter mapping for data source"""
     name: str  # Parameter name
-    from_field: Optional[str] = None  # Map from form field (e.g., "field.department")
-    value: Optional[Any] = None  # Or provide a static value
-
-    @field_validator('from_field', 'value')
-    @classmethod
-    def validate_source(cls, v, info: ValidationInfo):
-        """Validate that either from_field or value is provided"""
-        # Allow both to be None temporarily, will be checked in model_validator
-        return v
+    from_field: Optional[str] = None   # Map from form field (e.g., "field.department")
+    from_asset: Optional[str] = None   # Read from asset.properties by asset name
+    property: Optional[str] = None     # Key or JSONPath ($.path) into asset.properties when from_asset is set
+    value: Optional[Any] = None        # Or provide a static value
 
     @model_validator(mode='after')
     def validate_has_source(self):
-        """Ensure either from_field or value is provided"""
-        if self.from_field is None and self.value is None:
-            raise ValueError(f"Parameter '{self.name}' must have either 'from_field' or 'value'")
-        if self.from_field is not None and self.value is not None:
-            raise ValueError(f"Parameter '{self.name}' cannot have both 'from_field' and 'value'")
+        """Ensure exactly one source is provided"""
+        sources = [s for s in (self.from_field, self.from_asset, self.value) if s is not None]
+        if len(sources) == 0:
+            raise ValueError(f"Parameter '{self.name}' must have one of: 'from_field', 'from_asset', or 'value'")
+        if len(sources) > 1:
+            raise ValueError(f"Parameter '{self.name}' must have only one of: 'from_field', 'from_asset', or 'value'")
         return self
 
 
@@ -693,24 +689,30 @@ class DataSourceJoin(BaseModel):
 
 class DataSourceConfig(BaseModel):
     """Data source configuration for fetching external data in workflows"""
-    # New preferred method: use source_id (unique identifier)
-    source_id: Optional[str] = None  # Data source unique ID (e.g., "src_abc123")
+    # Preferred: source_id (stable UUID) or source_name (portable human name)
+    source_id: Optional[str] = None    # Data source unique ID (e.g., "src_abc123")
+    source_name: Optional[str] = None  # Human-readable name — portable across companies
 
     # Legacy method: use connector + source names
     connector: Optional[str] = None  # Connector name (e.g., "my_database", "airtable_connector")
     source: Optional[str] = None     # Data source name within connector
 
     params: Optional[list[DataSourceParameterMapping]] = None  # Parameter mappings
-    save_to: str    # Required: Variable name to save the fetched data (e.g., "employees_json")
-    timeout: Optional[int] = None  # Timeout in seconds
+    save_to: Optional[str] = None   # Variable name to save fetched data; required unless field_mapping is used
+    timeout: Optional[int] = None   # Timeout in seconds
     join: Optional[list[DataSourceJoin]] = None  # Inline batch-lookup joins for relational ID fields
+
+    # DeepDiff comparison against an asset baseline
+    compare_to_asset: Optional[str] = None   # Asset name to compare fetched data against
+    save_diff_to: Optional[str] = None       # Variable to store human-readable diff string
+    ignore_keys: Optional[list[str]] = None  # Top-level keys to exclude from comparison
 
     @model_validator(mode='after')
     def validate_source_specification(self):
-        """Validate that either source_id OR (connector + source) is provided"""
-        if not self.source_id and not (self.connector and self.source):
+        """Validate that source_id, source_name, or (connector + source) is provided"""
+        if not self.source_id and not self.source_name and not (self.connector and self.source):
             raise ValueError(
-                "Data source must specify either 'source_id' OR both 'connector' and 'source'"
+                "Data processor must specify 'source_id', 'source_name', or both 'connector' and 'source'"
             )
         return self
 
@@ -750,7 +752,7 @@ class WorkflowStep(BaseModel):
     api: Optional[ApiConfig] = None
 
     # Data source configuration (for fetching external data)
-    data_source: Optional[DataSourceConfig] = None
+    data_processor: Optional[DataSourceConfig] = None
 
     # Actions
     on_approve: Optional[ActionConfig] = None
@@ -886,17 +888,17 @@ class WorkflowStep(BaseModel):
     @model_validator(mode='after')
     def validate_step_type_requirements(self):
         """Validate that required fields are present based on step type"""
-        # Automatic steps must have api, data_source, or asset configuration
+        # Automatic steps must have api, data_processor, or asset configuration
         if self.type == StepType.AUTOMATIC:
-            if not self.api and not self.data_source and not self.field_mapping:
+            if not self.api and not self.data_processor and not self.field_mapping:
                 raise ValueError(
                     "Automatic steps must have either 'api' configuration (connector + action), "
-                    "'data_source' (external data fetch), or 'field_mapping' (payload mapping)"
+                    "'data_processor' (external data fetch), or 'field_mapping' (payload mapping)"
                 )
             if self.api and (not self.api.connector or not self.api.action):
                 raise ValueError("Automatic steps must specify both 'connector' and 'action' in api config")
 
-            # field_mapping with data_source is valid
+            # field_mapping with data_processor is valid
             # field_mapping alone is valid (for webhook payload mapping)
 
         # Notification steps must have recipients and notification
@@ -1035,8 +1037,8 @@ class DataConditionConfig(BaseModel):
     Fetches data from a data source and optionally compares it against
     a saved asset baseline using deepdiff.
     """
-    data_source_connector: Optional[str] = None              # Connector name (optional, resolved from source)
-    data_source_name: str                                   # Data source name (e.g., "GCP IAM Users")
+    data_processor_connector: Optional[str] = None              # Connector name (optional, resolved from source)
+    data_processor_name: str                                   # Data source name (e.g., "GCP IAM Users")
     compare_to_asset: Optional[str] = None                  # Asset name for deepdiff comparison
     params: Optional[list[dict[str, Any]]] = None           # Data source parameters
     ignore_keys: Optional[list[str]] = None                 # Keys to ignore in deepdiff comparison
