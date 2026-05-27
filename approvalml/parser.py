@@ -1056,6 +1056,7 @@ class TriggerConfig(BaseModel):
     data_condition: Optional[DataConditionConfig] = None    # Optional data-driven condition
     preset_form_data: Optional[dict[str, Any]] = None       # Auto-fill form fields by name match
     requestor_email: Optional[str] = None                   # Employee email to act as requestor
+    requestor_company_role: Optional[str] = None            # Company role to resolve requestor from (recommended for scheduled workflows)
 
     # Field mapping for webhook/URL triggers
     # Maps incoming payload/query params to form fields using JSONPath expressions

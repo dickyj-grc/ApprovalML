@@ -129,6 +129,40 @@ triggers:
   - type: webhook
 ```
 
+### Trigger Fields
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `type` | ✅ Yes | `cron`, `webhook`, or `one_time` |
+| `schedule` | For `cron`/`one_time` | Cron expression, e.g. `0 9 * * *` for daily 9 AM |
+| `max_runs` | No | Auto-pause after N executions |
+| `preset_form_data` | No | Static form values to inject on launch |
+| `requestor_email` | No | Email of the employee to treat as submitter |
+| `requestor_company_role` | No | **Recommended for scheduled workflows** — the first active employee with this `company_role` becomes the submitter |
+| `data_condition` | No | Fetch external data and only launch if changes are detected |
+
+### Best Practice: Use `requestor_company_role` for Ownership
+
+For scheduled workflows, pinning ownership to a single person (`requestor_email`) creates a bottleneck and a single point of failure. If that person leaves, the workflow breaks.
+
+Instead, use `requestor_company_role` to distribute ownership across a functional role:
+
+```yaml
+triggers:
+  - type: cron
+    schedule: "0 9 * * 1"  # Every Monday 9 AM
+    requestor_company_role: "finance_manager"
+    preset_form_data:
+      report_type: "weekly_payroll"
+```
+
+**How it works:**
+- At each scheduled tick, the system queries active employees for the first person with that company role.
+- If that employee leaves, the next tick automatically finds the next active employee with that role.
+- The resolved requestor ID is stamped in the instance's metadata for audit purposes.
+
+**Resolution priority:** `requestor_id` → `requestor_email` → `requestor_company_role` → `workflow.created_by`
+
 ### When to use triggers
 
 - User says "every hour", "daily", "nightly", "weekly", "every Monday", "on a schedule" → `type: cron`
