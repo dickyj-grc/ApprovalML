@@ -2593,7 +2593,7 @@ FIELD_TYPES = {
         "validation": ["required"],
         "optional_props": ["search", "placeholder"],
         "search_props": ["min_length", "debounce_ms", "max_results"],
-        "data_source_props": ["source_name", "params", "object_path", "value_field", "label_field", "display"],
+        "data_source_props": ["source_id", "source_name", "params", "object_path", "value_field", "label_field", "display"],
         "value_type": "dynamic",  # Can be string (ID) or object depending on configuration
         "value_type_rules": {
             # If value_field is NOT set in options.data_source, stores entire object

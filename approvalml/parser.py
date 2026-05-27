@@ -247,7 +247,7 @@ class DataSourceParam(BaseModel):
     from_field: str  # Field reference like "field.department" or "variable.user_id"
 
 
-class DataSourceConfig(BaseModel):
+class FieldDataSourceConfig(BaseModel):
     """Data source configuration for dynamic fields - handles both data fetching and response parsing.
 
     Resolution order at runtime:
@@ -260,9 +260,9 @@ class DataSourceConfig(BaseModel):
     params: Optional[list[DataSourceParam]] = None  # Parameters to pass to data source
 
     @model_validator(mode='after')
-    def require_source_id_or_name(self) -> 'DataSourceConfig':
+    def require_source_id_or_name(self) -> 'FieldDataSourceConfig':
         if not self.source_id and not self.source_name:
-            raise ValueError("DataSourceConfig requires 'source_id' or 'source_name'")
+            raise ValueError("FieldDataSourceConfig requires 'source_id' or 'source_name'")
         return self
 
     # Response parsing configuration (how to interpret the data source response)
@@ -281,7 +281,7 @@ class SearchConfig(BaseModel):
 
 class OptionsConfig(BaseModel):
     """Options configuration - can be either static list or dynamic data source"""
-    data_source: Optional[DataSourceConfig] = None  # Dynamic options from data source
+    data_source: Optional[FieldDataSourceConfig] = None  # Dynamic options from data source
 
     @model_validator(mode='after')
     def validate_options_config(self):
@@ -669,7 +669,8 @@ class DataSourceJoin(BaseModel):
         # `as` not needed when pick is a dict
     """
     field: str                                          # field on each row containing the ID(s)
-    source_id: str                                      # connector source to batch-fetch from
+    source_id: Optional[str] = None                     # stable unique ID of connector source (preferred)
+    source_name: Optional[str] = None                   # human-readable name — portable across companies
     on: str = 'id'                                      # key field in join records (default: "id")
     pick: Union[str, dict[str, str]] = 'name'           # single field name OR {output: source} mapping
     as_field: Optional[str] = Field(default=None, alias='as')  # output field; required when pick is a string
@@ -678,6 +679,13 @@ class DataSourceJoin(BaseModel):
     as_array: bool = False                              # if True, output is a list instead of joined string
 
     model_config = ConfigDict(populate_by_name=True)
+
+    @model_validator(mode='after')
+    def validate_source_specification(self):
+        """Either source_id or source_name must be provided."""
+        if not self.source_id and not self.source_name:
+            raise ValueError("DataSourceJoin requires 'source_id' or 'source_name'")
+        return self
 
     @model_validator(mode='after')
     def validate_as_required_for_string_pick(self):
