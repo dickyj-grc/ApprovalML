@@ -621,11 +621,11 @@ These attributes belong in `layout.defaults` or `section.fields`, not on `form.f
 
 | Attribute | Values | Description |
 |-----------|--------|-------------|
-| `align` | `left` \| `center` \| `right` | Horizontal alignment of the field value in read-only display |
-| `bottom_border` | `true` \| `false` | Full-width border below the field entry — acts as a visual separator |
-| `span` | `full` \| `half` \| `auto` | Grid column span hint |
-| `valign` | `top` \| `middle` \| `bottom` | Vertical alignment |
-| `label_position` | `above` \| `inline` \| `hidden` | Label placement relative to value |
+| `align` | `left` | `center` | `right` | Horizontal alignment of the field value in read-only display |
+| `bottom_border` | `true` | `false` | Full-width border below the field entry — acts as a visual separator |
+| `span` | `full` | `half` | `auto` | Grid column span hint |
+| `valign` | `top` | `middle` | `bottom` | Vertical alignment |
+| `label_position` | `above` | `inline` | `hidden` | Label placement relative to value |
 
 **Exception:** `align` and `width` on `item_fields` inside `line_items` should stay on the field — they
 define table column properties, not section layout.
