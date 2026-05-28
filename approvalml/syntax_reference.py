@@ -2691,7 +2691,7 @@ STEP_TYPES = {
         ),
         "data_processor_props": {
             "required": ["source_name", "save_to"],
-            "optional": ["compare_to_asset", "save_diff_to", "ignore_keys", "field_mapping"]
+            "optional": ["compare_to_asset", "save_diff_to", "ignore_keys", "field_mapping", "output_schema"]
         },
         "asset_props": {
             "required": ["data_from", "asset_name"]

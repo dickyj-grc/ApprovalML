@@ -715,6 +715,9 @@ class DataSourceConfig(BaseModel):
     save_diff_to: Optional[str] = None       # Variable to store human-readable diff string
     ignore_keys: Optional[list[str]] = None  # Top-level keys to exclude from comparison
 
+    # AI connector structured output — overrides the schema stored in the data processor config
+    output_schema: Optional[dict] = None     # JSON Schema; passed to AI connectors (openai_compatible, gemini, anthropic)
+
     @model_validator(mode='after')
     def validate_source_specification(self):
         """Validate that source_id, source_name, or (connector + source) is provided"""
