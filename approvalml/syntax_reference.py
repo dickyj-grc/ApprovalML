@@ -1568,27 +1568,45 @@ fetch_new_records:
 - Fields containing emphasized text get an amber background to draw attention
 - Use this for important values that approvers need to review carefully
 
-#### 4b. Asset Update (Write)
-Update an asset with data from a form field:
+#### 4b. Asset Update / Load (`asset:` / `resource:`)
+Two directions are supported. Use `data_from` to write a workflow variable into an asset, or `data_to` to load an asset value into a workflow variable. The keys `asset:` / `resource:` and `asset_name:` / `resource_name:` are interchangeable.
+
+**Write mode** — saves a workflow variable to the asset (upsert):
 
 ```yaml
 update_asset:
   type: "automatic"
   name: "Update IAM Baseline Asset"
   asset:
-    data_from: "iam_users_json"      # Get data from this form field
-    asset_name: "gcp-iam-baseline"   # Update this asset
+    data_from: "iam_users_json"       # workflow variable → asset
+    asset_name: "gcp-iam-baseline"
   on_complete:
     continue_to: "approved_end"
 ```
 
+**Read mode** — loads the asset value into a workflow variable:
+
+```yaml
+load_baseline:
+  type: "automatic"
+  name: "Load IAM Baseline"
+  asset:
+    data_to: "iam_users_json"         # asset → workflow variable
+    asset_name: "gcp-iam-baseline"
+  on_complete:
+    continue_to: "compare_step"
+```
+
 **Asset Properties:**
-- `data_from`: Form field containing the data to save - **Required**
-- `asset_name`: Name of the asset to update - **Required**
+- `data_from`: Workflow variable whose value is written to the asset (write mode) - **Required if not using data_to**
+- `data_to`: Workflow variable that receives the asset value (read mode) - **Required if not using data_from**
+- `asset_name` / `resource_name`: Name of the asset to operate on - **Required**
+- `data_from` and `data_to` are mutually exclusive
 
 **Test Mode Behavior:**
-- `data_processor` (read): Executes normally - data is fetched and compared
-- `asset` (write): Logs the action in history but does NOT modify the asset
+- `data_processor` (fetch): Executes normally - data is fetched and compared
+- `asset` write (`data_from`): Logs the action in history but does NOT modify the asset
+- `asset` read (`data_to`): Reads the user-scoped test copy if available, otherwise falls back to the production copy
 
 #### 4c. Field Mapping (Extract and Transform Data)
 Map and transform values from webhook payloads or API responses into form fields using JSONPath extraction and JSONata transformations.
@@ -2694,7 +2712,9 @@ STEP_TYPES = {
             "optional": ["compare_to_asset", "save_diff_to", "ignore_keys", "field_mapping", "output_schema"]
         },
         "asset_props": {
-            "required": ["data_from", "asset_name"]
+            "required": ["asset_name"],
+            "one_of": [["data_from"], ["data_to"]],
+            "optional": []
         }
     },
     "notification": {

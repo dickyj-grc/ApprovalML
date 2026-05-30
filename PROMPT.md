@@ -835,27 +835,45 @@ fetch_iam_data:
 - Fields containing emphasized text get an amber background to draw attention
 - Use this for important values that approvers need to review carefully
 
-#### 4b. Resource Update (Write)
-Update a resource with data from a form field:
+#### 4b. Resource Update / Load (`resource:` / `asset:`)
+Two directions are supported. Use `data_from` to write a workflow variable into a resource, or `data_to` to load a resource value into a workflow variable. The keys `resource:` / `asset:` and `resource_name:` / `asset_name:` are interchangeable.
+
+**Write mode** — saves a workflow variable to the resource (upsert):
 
 ```yaml
 update_resource:
   type: "automatic"
   name: "Update IAM Baseline Resource"
   resource:
-    data_from: "iam_users_json"      # Get data from this form field
-    resource_name: "gcp-iam-baseline" # Update this resource
+    data_from: "iam_users_json"       # workflow variable → resource
+    resource_name: "gcp-iam-baseline"
   on_complete:
     continue_to: "approved_end"
 ```
 
+**Read mode** — loads the resource value into a workflow variable:
+
+```yaml
+load_baseline:
+  type: "automatic"
+  name: "Load IAM Baseline"
+  resource:
+    data_to: "iam_users_json"         # resource → workflow variable
+    asset_name: "gcp-iam-baseline"
+  on_complete:
+    continue_to: "compare_step"
+```
+
 **Resource Properties:**
-- `data_from`: Form field containing the data to save - **Required**
-- `resource_name`: Name of the resource to update - **Required**
+- `data_from`: Workflow variable whose value is written to the resource (write mode) - **Required if not using data_to**
+- `data_to`: Workflow variable that receives the resource value (read mode) - **Required if not using data_from**
+- `resource_name` / `asset_name`: Name of the resource to operate on - **Required**
+- `data_from` and `data_to` are mutually exclusive
 
 **Test Mode Behavior:**
-- `data_source` (read): Executes normally - data is fetched and compared
-- `resource` (write): Logs the action in history but does NOT modify the resource
+- `data_source` / `data_processor` (fetch): Executes normally - data is fetched and compared
+- `resource` write (`data_from`): Logs the action in history but does NOT modify the resource
+- `resource` read (`data_to`): Reads the user-scoped test copy if available, otherwise falls back to the production copy
 
 **Important:** `type: automatic` should ONLY be used for data operations. For sending notifications, use `type: notification` instead.
 
