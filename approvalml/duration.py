@@ -41,7 +41,38 @@ _UNIT_TO_HOURS: dict = {
 }
 
 # Longest alternatives first (ms before m/s) to avoid partial matches.
-_TOKEN_RE = re.compile(r"(\d+(?:\.\d+)?)\s*(ms|y|M|w|d|h|m|s)", re.ASCII)
+# Also supports underscore-separated legacy formats like "24_hours", "2_days".
+_TOKEN_RE = re.compile(
+    r"(\d+(?:\.\d+)?)[\s_]*(business_days|months?|minutes?|hours?|weeks?|years?|days?|ms|y|M|w|d|h|m|s)",
+    re.ASCII | re.IGNORECASE,
+)
+
+# Map full/abbreviated unit names to the short keys in _UNIT_TO_HOURS.
+_UNIT_ALIASES: dict = {
+    "ms": "ms",
+    "s": "s",
+    "m": "m",
+    "min": "m",
+    "minute": "m",
+    "minutes": "m",
+    "h": "h",
+    "hr": "h",
+    "hour": "h",
+    "hours": "h",
+    "d": "d",
+    "day": "d",
+    "days": "d",
+    "business_days": "d",
+    "w": "w",
+    "week": "w",
+    "weeks": "w",
+    "M": "M",
+    "month": "M",
+    "months": "M",
+    "y": "y",
+    "year": "y",
+    "years": "y",
+}
 
 
 def parse_sla_duration(value: Union[str, int, float, None]) -> float:
@@ -77,14 +108,18 @@ def parse_sla_duration(value: Union[str, int, float, None]) -> float:
 
     # Guard against extra characters (e.g. "4h garbage")
     reconstructed = "".join(f"{num}{unit}" for num, unit in tokens)
-    stripped = re.sub(r"\s+", "", value)
-    if reconstructed != stripped:
+    # Strip whitespace and underscores from original for comparison
+    stripped = re.sub(r"[\s_]+", "", value)
+    if reconstructed.lower().replace("_", "") != stripped.lower():
         raise ValueError(
             f"Unrecognised SLA duration: {value!r}. "
             "Use a duration string like '4h', '10m', '2d', '1h30m'."
         )
 
-    return sum(float(num) * _UNIT_TO_HOURS[unit] for num, unit in tokens)
+    return sum(
+        float(num) * _UNIT_TO_HOURS[_UNIT_ALIASES[unit.lower()]]
+        for num, unit in tokens
+    )
 
 
 def format_sla_hours(hours: float) -> str:

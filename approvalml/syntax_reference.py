@@ -223,6 +223,7 @@ When a workflow is cron-triggered, the form fields receive their values from aut
 - `line_items` - Dynamic table with repeating rows
 - `autocomplete` - Search-as-you-type field with data source integration
 - `autonumber` - Auto-incrementing sequential number (e.g. EXP-00042). Read-only; generated at submission. Supports `prefix` and `pad_length`.
+- `json` - Structured JSON data field with interactive tree view and syntax highlighting support.
 
 ### Additional Field Display Properties
 ```yaml
@@ -2601,6 +2602,18 @@ FIELD_TYPES = {
     "radio": {"required_props": ["options"], "validation": ["required"], "optional_props": ["display_as"]},
     "file_upload": {"validation": ["accept", "multiple", "max_size", "max_files"], "optional_props": ["capture"]},
     "signature": {"validation": ["required"], "optional_props": ["initial", "label"]},
+    "json": {
+        "validation": ["required"],
+        "optional_props": ["display_as", "default_value"],
+        "description": "Structured JSON data field. Supports interactive tree view and syntax highlighting.",
+        "yaml_example": (
+            "- name: payload\n"
+            "  type: json\n"
+            "  label: API Payload\n"
+            "  display_as: tree\n"
+            "  default_value: '{\"status\": \"active\"}'"
+        )
+    },
     "richtext": {
         "validation": ["required"],
         "description": "Rich text editor (WYSIWYG) that supports HTML formatting and embedded images. Images are automatically converted to base64 and embedded in the HTML content. Content is saved to S3/local storage at companies/{company_id}/workflows/{workflow_id}/instances/{instance_id}/richtext/{field_name}.html"
