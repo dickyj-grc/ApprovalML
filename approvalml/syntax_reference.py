@@ -603,7 +603,7 @@ form:
       - id: "section_id"
         title: "Section Title"
         description: "Optional description shown below title"
-        initial: true  # If true, this section is shown during initial submission
+        initial: true  # If true, this section is shown during initial submission. DEFAULT: add initial: true to EVERY section so the submitter sees the entire form up front. Only omit it from sections that are explicitly meant to be filled by approvers during workflow steps.
         grid:
           - ["field1", "field2"]  # Row with 2 fields side by side
           - ["field3"]  # Row with 1 field (full width)
@@ -631,7 +631,7 @@ form:
 
 1. **Sections**: Organize fields into logical groups with titles and descriptions
 2. **Grid Layout**: Control field positioning using a row-based grid system
-3. **Initial Section**: Mark one section with `initial: true` to show it on workflow creation
+3. **Initial Visibility**: By default, mark EVERY section with `initial: true` so the submitter sees the whole form at creation. Only omit `initial: true` (or set `initial: false`) for sections that are explicitly meant to be filled by approvers during later workflow steps.
 4. **Responsive**: Automatically adapts to tablet and mobile screens
 5. **Layout Defaults**: Set default layout attributes per field across all sections via `layout.defaults`
 6. **Section Overrides**: Override layout per field within a specific section via `section.fields`
@@ -678,6 +678,7 @@ form:
 
       - id: "it_setup"
         title: "IT Equipment Setup"
+        initial: true
         grid:
           - ["laptop_choice"]
           - ["monitor_request", "keyboard_request", "mouse_request"]
@@ -726,8 +727,9 @@ workflow:
 
 **Important Notes:**
 - If a step has no `view_sections` and no `edit_sections`, all sections are displayed in view mode by default
-- The `initial: true` section is shown when the requestor creates the workflow
-- Sections not marked as `initial` are typically filled in during approval steps
+- The `initial: true` sections are shown when the requestor creates the workflow
+- Sections without `initial: true` are hidden from the submitter and are typically filled in during approval steps
+- **Default generation rule:** put `initial: true` on ALL sections unless the user explicitly describes a multi-stage form where specific sections belong to approvers (e.g. "IT manager fills out the equipment section"). In that case only the submitter-facing sections get `initial: true`.
 
 ### Completed View (`completed_sections`)
 
