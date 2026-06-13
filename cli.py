@@ -5,6 +5,7 @@ Usage:
     approvalml validate <file>
     approvalml validate <file> --verbose
     approvalml info <file>
+    approvalml mcp-server [--api-url URL] [--api-token TOKEN] [--config PATH]
 """
 
 import sys
@@ -66,9 +67,30 @@ def cmd_info(args):
     return 0
 
 
+def cmd_mcp_server(args):
+    """Start the ApprovalML MCP server."""
+    try:
+        from approvalml.mcp_server import start
+    except ImportError:
+        print(
+            "MCP server dependencies not installed.\n"
+            "Run: pip install 'approvalml[mcp]'",
+            file=sys.stderr,
+        )
+        return 1
+    start(
+        api_url=args.api_url,
+        api_token=args.api_token,
+        config_path=args.config,
+        http=args.http,
+        port=args.port,
+    )
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(
-        description="ApprovalML workflow validator",
+        description="ApprovalML workflow validator and MCP server",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -83,6 +105,19 @@ def main():
     p_info = subparsers.add_parser("info", help="Print a summary of a workflow file")
     p_info.add_argument("file", help="Path to the YAML workflow file")
     p_info.set_defaults(func=cmd_info)
+
+    # mcp-server command
+    p_mcp = subparsers.add_parser("mcp-server", help="Start the ApprovalML MCP server")
+    p_mcp.add_argument("--api-url", default=None, help="ApprovalML backend URL (env: APPROVALML_API_URL)")
+    p_mcp.add_argument("--api-token", default=None, help="Bearer token (env: APPROVALML_API_TOKEN)")
+    p_mcp.add_argument(
+        "--config",
+        default=None,
+        help="Path to wrapped-servers config YAML (env: APPROVALML_CONFIG, default: approvalml-config.yaml)",
+    )
+    p_mcp.add_argument("--http", action="store_true", help="Use HTTP transport instead of stdio")
+    p_mcp.add_argument("--port", type=int, default=3100, help="HTTP port (default: 3100, requires --http)")
+    p_mcp.set_defaults(func=cmd_mcp_server)
 
     args = parser.parse_args()
     sys.exit(args.func(args))
