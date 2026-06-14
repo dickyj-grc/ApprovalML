@@ -1,0 +1,25 @@
+name: Verify ApprovalML
+
+on:
+  repository_dispatch:
+    types: [subtree-push]
+
+jobs:
+  verify:
+    name: Verify import boundary and run tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install package and dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Verify import boundary
+        run: python -c "from approvalml.parser import ApprovalMLParser; print('✅ Import boundary clean')"
+
+      - name: Run tests
+        run: pytest
