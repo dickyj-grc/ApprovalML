@@ -34,23 +34,19 @@ from typing import Any
 from .mcp_client import ApprovalMLClient
 from .mcp_proxy import WrappedServerRegistry
 
-try:
-    import mcp.server.stdio
-    import mcp.types as types
-    from mcp.server import Server
-    from mcp.server.models import InitializationOptions
-    import mcp.server.stdio as stdio_server
-except ImportError as e:
-    raise ImportError(
-        "MCP server dependencies not installed. "
-        "Run: pip install 'approvalml[mcp]'"
-    ) from e
-
 
 def _build_server(
     client: ApprovalMLClient,
     proxy: WrappedServerRegistry,
-) -> Server:
+):
+    try:
+        import mcp.types as types
+        from mcp.server import Server
+    except ImportError as e:
+        raise ImportError(
+            "MCP server dependencies not installed. "
+            "Run: pip install 'approvalml[mcp]'"
+        ) from e
     server = Server("approvalml")
 
     @server.list_tools()
@@ -178,6 +174,15 @@ def _dispatch(
 
 
 async def run_stdio(client: ApprovalMLClient, proxy: WrappedServerRegistry) -> None:
+    try:
+        import mcp.server.stdio
+        from mcp.server.models import InitializationOptions
+    except ImportError as e:
+        raise ImportError(
+            "MCP server dependencies not installed. "
+            "Run: pip install 'approvalml[mcp]'"
+        ) from e
+
     server = _build_server(client, proxy)
     async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
         await server.run(

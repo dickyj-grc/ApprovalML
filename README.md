@@ -30,6 +30,153 @@ approvalml validate my-workflow.yaml --verbose
 approvalml info my-workflow.yaml
 ```
 
+## MCP Server (Claude Desktop)
+
+Gate any AI action behind a human approval step. The MCP server connects Claude to the ApprovalML runtime, giving you `request_approval`, `check_approval_status`, and `list_pending_approvals` as native tools.
+
+```bash
+pip install "approvalml[mcp]"
+export APPROVALML_API_URL=http://localhost:8765
+export APPROVALML_API_TOKEN=<your-token>
+approvalml mcp-server
+```
+
+Add to `~/.claude/claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "approvalml": {
+      "command": "approvalml",
+      "args": ["mcp-server"],
+      "env": {
+        "APPROVALML_API_URL": "http://localhost:8765",
+        "APPROVALML_API_TOKEN": "your-token-here"
+      }
+    }
+  }
+}
+```
+
+The MCP server is stateless — it calls the runtime REST API. It works with the [standalone runtime](#standalone-runtime) below or with a hosted ApprovalML instance.
+
+---
+
+## Standalone Runtime
+
+A self-contained approval server backed by PostgreSQL and SMTP. No SaaS account needed.
+
+### Quick start (Docker)
+
+```bash
+cd packages/approvalml    # or wherever you cloned the repo
+cp .env.example .env      # edit APPROVALML_API_TOKEN and APPROVALML_SERVER_URL
+docker compose up -d
+```
+
+The runtime starts on `http://localhost:8765`. Drop `*.yaml` workflow files into `./workflows/` and they are loaded into the database on startup.
+
+### Multi-user token provisioning
+
+Each user or AI agent gets their own token. The server records `submitter_email` on every gate and workflow instance automatically — no need to pass an email in the request.
+
+**User tokens vs. the master token:**
+
+| Token | Sees | Can register workflows |
+|---|---|---|
+| `APPROVALML_API_TOKEN` (master) | All gates and instances | Yes |
+| `ffat_…` (user token) | Own submissions only | No |
+
+#### Method 1 — API (recommended for runtime management)
+
+Create a token for a user with the master token:
+
+```bash
+curl -X POST http://localhost:8765/services/v1/tokens \
+  -H "Authorization: Bearer $APPROVALML_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"email": "alice@example.com", "name": "Alice"}'
+
+# {"token": "ffat_abc123...", "email": "alice@example.com", "name": "Alice"}
+```
+
+List all tokens:
+
+```bash
+curl http://localhost:8765/services/v1/tokens \
+  -H "Authorization: Bearer $APPROVALML_API_TOKEN"
+```
+
+Revoke a token:
+
+```bash
+curl -X DELETE http://localhost:8765/services/v1/tokens/ffat_abc123... \
+  -H "Authorization: Bearer $APPROVALML_API_TOKEN"
+```
+
+#### Method 2 — Environment variable (seed at startup)
+
+Set `APPROVALML_TOKENS` in your `.env` file before starting Docker:
+
+```bash
+# .env
+APPROVALML_TOKENS=ffat_abc123:alice@example.com:Alice,ffat_xyz789:bob@example.com:Bob
+```
+
+Format: `token:email` or `token:email:display name`, comma-separated. Tokens that already exist in the database are skipped (idempotent).
+
+#### Method 3 — Pre-generated tokens in `.env` (simple teams)
+
+Generate tokens yourself and seed them:
+
+```bash
+# Generate a token
+python -c "import secrets; print('ffat_' + secrets.token_urlsafe(32))"
+# ffat_T3n...
+
+# Add to .env
+echo "APPROVALML_TOKENS=ffat_T3n...:alice@example.com" >> .env
+docker compose restart runtime
+```
+
+### Configuring each AI agent
+
+Each person running Claude Desktop gets their own token in their MCP config:
+
+```json
+{
+  "mcpServers": {
+    "approvalml": {
+      "command": "approvalml",
+      "args": ["mcp-server"],
+      "env": {
+        "APPROVALML_API_URL": "http://your-server:8765",
+        "APPROVALML_API_TOKEN": "ffat_abc123..."
+      }
+    }
+  }
+}
+```
+
+Alice's agent submits with `alice@example.com` as the submitter. `list_pending_approvals` returns only Alice's pending gates — not Bob's.
+
+### Environment variables
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `APPROVALML_API_TOKEN` | _(empty)_ | Master/admin token. Unset = open access (dev only). |
+| `APPROVALML_TOKENS` | _(empty)_ | Seed user tokens at startup: `token:email,token:email:Name` |
+| `DATABASE_URL` | `postgresql://approvalml:approvalml@localhost:5432/approvalml` | PostgreSQL DSN |
+| `APPROVALML_SERVER_URL` | `http://localhost:8765` | Public URL embedded in email approve/reject links |
+| `WORKFLOWS_DIR` | _(empty)_ | Directory of `*.yaml` files loaded into DB on startup |
+| `SMTP_HOST` | _(empty)_ | SMTP server. Leave blank to print emails to stdout. |
+| `SMTP_PORT` | `587` | SMTP port |
+| `SMTP_USER` | _(empty)_ | SMTP username |
+| `SMTP_PASSWORD` | _(empty)_ | SMTP password |
+| `EMAIL_FROM` | `approvalml@localhost` | Sender address |
+
+---
+
 ## Python API
 
 ```python

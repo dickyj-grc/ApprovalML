@@ -1,0 +1,39 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_DB: approvalml
+      POSTGRES_USER: approvalml
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-approvalml}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U approvalml -d approvalml"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  runtime:
+    build: .
+    ports:
+      - "${RUNTIME_PORT:-8765}:8765"
+    environment:
+      DATABASE_URL: postgresql://approvalml:${POSTGRES_PASSWORD:-approvalml}@postgres:5432/approvalml
+      APPROVALML_SERVER_URL: ${APPROVALML_SERVER_URL:-http://localhost:8765}
+      APPROVALML_API_TOKEN: ${APPROVALML_API_TOKEN:-}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      EMAIL_FROM: ${EMAIL_FROM:-approvalml@localhost}
+      EMAIL_FROM_NAME: ${EMAIL_FROM_NAME:-ApprovalML}
+      WORKFLOWS_DIR: ${WORKFLOWS_DIR:-/app/workflows}
+    volumes:
+      - ${WORKFLOWS_DIR_HOST:-./workflows}:/app/workflows:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  pgdata:

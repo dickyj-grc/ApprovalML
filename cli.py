@@ -6,6 +6,7 @@ Usage:
     approvalml validate <file> --verbose
     approvalml info <file>
     approvalml mcp-server [--api-url URL] [--api-token TOKEN] [--config PATH]
+    approvalml serve [--port PORT] [--db-url URL] [--server-url URL]
 """
 
 import sys
@@ -67,6 +68,27 @@ def cmd_info(args):
     return 0
 
 
+def cmd_serve(args):
+    """Start the ApprovalML standalone runtime server."""
+    try:
+        from approvalml.runtime.server import start
+    except ImportError:
+        print(
+            "Runtime server dependencies not installed.\n"
+            "Run: pip install 'approvalml[serve]'",
+            file=sys.stderr,
+        )
+        return 1
+    start(
+        port=args.port,
+        db_url=args.db_url,
+        server_url=args.server_url,
+        api_token=args.api_token,
+        workflows_dir=args.workflows_dir,
+    )
+    return 0
+
+
 def cmd_mcp_server(args):
     """Start the ApprovalML MCP server."""
     try:
@@ -105,6 +127,15 @@ def main():
     p_info = subparsers.add_parser("info", help="Print a summary of a workflow file")
     p_info.add_argument("file", help="Path to the YAML workflow file")
     p_info.set_defaults(func=cmd_info)
+
+    # serve command
+    p_serve = subparsers.add_parser("serve", help="Start the standalone approval runtime server")
+    p_serve.add_argument("--port", type=int, default=8765, help="HTTP port (default: 8765)")
+    p_serve.add_argument("--db-url", default=None, help="PostgreSQL DSN (env: DATABASE_URL)")
+    p_serve.add_argument("--server-url", default=None, help="Public URL shown in email links (env: APPROVALML_SERVER_URL)")
+    p_serve.add_argument("--api-token", default=None, help="Bearer token for MCP client auth (env: APPROVALML_API_TOKEN)")
+    p_serve.add_argument("--workflows-dir", default=None, help="Directory of *.yaml files to load on startup (env: WORKFLOWS_DIR)")
+    p_serve.set_defaults(func=cmd_serve)
 
     # mcp-server command
     p_mcp = subparsers.add_parser("mcp-server", help="Start the ApprovalML MCP server")

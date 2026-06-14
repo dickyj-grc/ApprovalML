@@ -18,7 +18,7 @@ class ApprovalMLClient:
         api_token: Optional[str] = None,
         timeout: float = 30.0,
     ):
-        self.base_url = (api_url or os.environ.get("APPROVALML_API_URL", "http://localhost:8000")).rstrip("/")
+        self.base_url = (api_url or os.environ.get("APPROVALML_API_URL", "http://localhost:8765")).rstrip("/")
         self.token = api_token or os.environ.get("APPROVALML_API_TOKEN", "")
         self.timeout = timeout
 
