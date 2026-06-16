@@ -85,7 +85,7 @@ Each user or AI agent gets their own token. The server records `submitter_email`
 | Token | Sees | Can register workflows |
 |---|---|---|
 | `APPROVALML_API_TOKEN` (master) | All gates and instances | Yes |
-| `ffat_…` (user token) | Own submissions only | No |
+| `awat_…` (user token) | Own submissions only | No |
 
 #### Method 1 — API (recommended for runtime management)
 
@@ -97,7 +97,7 @@ curl -X POST http://localhost:8765/services/v1/tokens \
   -H "Content-Type: application/json" \
   -d '{"email": "alice@example.com", "name": "Alice"}'
 
-# {"token": "ffat_abc123...", "email": "alice@example.com", "name": "Alice"}
+# {"token": "awat_abc123...", "email": "alice@example.com", "name": "Alice"}
 ```
 
 List all tokens:
@@ -110,7 +110,7 @@ curl http://localhost:8765/services/v1/tokens \
 Revoke a token:
 
 ```bash
-curl -X DELETE http://localhost:8765/services/v1/tokens/ffat_abc123... \
+curl -X DELETE http://localhost:8765/services/v1/tokens/awat_abc123... \
   -H "Authorization: Bearer $APPROVALML_API_TOKEN"
 ```
 
@@ -120,7 +120,7 @@ Set `APPROVALML_TOKENS` in your `.env` file before starting Docker:
 
 ```bash
 # .env
-APPROVALML_TOKENS=ffat_abc123:alice@example.com:Alice,ffat_xyz789:bob@example.com:Bob
+APPROVALML_TOKENS=awat_abc123:alice@example.com:Alice,awat_xyz789:bob@example.com:Bob
 ```
 
 Format: `token:email` or `token:email:display name`, comma-separated. Tokens that already exist in the database are skipped (idempotent).
@@ -131,11 +131,11 @@ Generate tokens yourself and seed them:
 
 ```bash
 # Generate a token
-python -c "import secrets; print('ffat_' + secrets.token_urlsafe(32))"
-# ffat_T3n...
+python -c "import secrets; print('awat_' + secrets.token_urlsafe(32))"
+# awat_T3n...
 
 # Add to .env
-echo "APPROVALML_TOKENS=ffat_T3n...:alice@example.com" >> .env
+echo "APPROVALML_TOKENS=awat_T3n...:alice@example.com" >> .env
 docker compose restart runtime
 ```
 
@@ -151,7 +151,7 @@ Each person running Claude Desktop gets their own token in their MCP config:
       "args": ["mcp-server"],
       "env": {
         "APPROVALML_API_URL": "http://your-server:8765",
-        "APPROVALML_API_TOKEN": "ffat_abc123..."
+        "APPROVALML_API_TOKEN": "awat_abc123..."
       }
     }
   }

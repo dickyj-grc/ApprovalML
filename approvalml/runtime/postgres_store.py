@@ -402,7 +402,7 @@ class PostgresWorkflowStore(PostgresStore, WorkflowStore):
     # ── API token management ───────────────────────────────────────────────────
 
     async def create_token(self, email: str, name: Optional[str] = None) -> UserToken:
-        token = "ffat_" + secrets.token_urlsafe(32)
+        token = "awat_" + secrets.token_urlsafe(32)
         now = datetime.now(timezone.utc)
         pool = self._pool_or_raise()
         async with pool.acquire() as conn:
