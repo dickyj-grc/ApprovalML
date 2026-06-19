@@ -197,6 +197,11 @@ workflow, summary = parse_approvalml(yaml_text)
 
 ## Example Workflow
 
+> [!NOTE]
+> In the open-source standalone runtime, role-based assignments (e.g., `role: manager`) and requestor-based hierarchy resolution (e.g., `${requestor.manager}`) are not supported because the open-source server is serverless and runs without a SaaS company directory database. 
+> 
+> For open-source deployment, assign step approvers using direct email strings (e.g., `approver: manager@example.com`) or resolve them dynamically using a form field email template (e.g., `approver: "${form.manager_email}"`).
+
 ```yaml
 name: "Leave Request"
 description: "Simple leave approval"
@@ -218,11 +223,16 @@ form:
       label: "Total Days"
       required: true
 
+    - name: "manager_email"
+      type: "text"
+      label: "Manager Email"
+      required: true
+
 workflow:
   manager_approval:
     name: "manager_approval"
     type: "decision"
-    approver: "${requestor.manager}"
+    approver: "${form.manager_email}"
     on_approve:
       continue_to: "done"
     on_reject:
