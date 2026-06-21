@@ -1611,7 +1611,52 @@ load_baseline:
 - `asset` write (`data_from`): Logs the action in history but does NOT modify the asset
 - `asset` read (`data_to`): Reads the user-scoped test copy if available, otherwise falls back to the production copy
 
-#### 4c. Field Mapping (Extract and Transform Data)
+#### 4c. Asset File Update (`asset_file:`)
+
+Upload a file from a `file_upload` form field into a named asset in the registry. The asset stores the current file reference in its `properties`; S3 bucket versioning automatically retains previous versions. Use this after an approval step to persist a document (policy, certificate, evidence) against a named asset.
+
+```yaml
+save_policy:
+  type: automatic
+  name: "Save SOC2 Policy to Registry"
+  asset_file:
+    asset_name: "vaap-soc2-{{product_id}}"   # resolved from request_data; each product has its own version history
+    field_name: policy_document               # which file field in the asset schema to update
+    file_from: policy_upload                  # file_upload form field containing the uploaded file
+    schema: "SOC2 Policy"                     # optional: assign schema when auto-creating the asset
+  on_complete:
+    continue_to: notify_team
+```
+
+**Properties:**
+- `asset_name`: Asset registry name. Supports `{{template}}` interpolation from `request_data`. Each unique resolved name has its own independent S3 version history — uploading for `ccp-prod123` never affects `ccp-prod456`.
+- `field_name`: The file field key within the asset's `properties` (and its schema, if one is attached).
+- `file_from`: Name of the `file_upload` field in the workflow form. The engine reads the file bytes from the instance attachment path and re-uploads them to the stable asset path.
+- `schema`: (Optional) Asset schema name to assign to the asset on first creation. Ignored if the asset already exists.
+
+**How versioning works:**
+The asset stores a JSON reference to the current file in `properties[field_name]`:
+```json
+{
+  "s3_key": "companies/1/assets/files/vaap-soc2-prod123/policy_document",
+  "original_name": "soc2-policy-2025.pdf",
+  "content_type": "application/pdf",
+  "size": 12345,
+  "s3_version_id": "abc123xyz",
+  "uploaded_at": "2025-06-18T07:30:00Z",
+  "uploaded_by": "alice@example.com"
+}
+```
+Previous versions are preserved in S3 and listed in the asset's chronology with `previous_s3_version_id` for recovery.
+
+**Download via API:**
+- `GET /assets/{uuid}/fields/{field_name}/download` — current version
+- `GET /assets/{uuid}/fields/{field_name}/download?version_id={v}` — specific S3 version
+- `GET /assets/{uuid}/fields/{field_name}/versions` — full version history
+
+Access is gated by the asset's `view_roles` on every request.
+
+#### 4d. Field Mapping (Extract and Transform Data)
 Map and transform values from webhook payloads or API responses into form fields using JSONPath extraction and JSONata transformations.
 
 **Three Types of Field Mapping:**
