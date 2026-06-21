@@ -1572,44 +1572,110 @@ fetch_new_records:
 - Use this for important values that approvers need to review carefully
 
 #### 4b. Asset Update / Load (`asset:` / `resource:`)
-Two directions are supported. Use `data_from` to write a workflow variable into an asset, or `data_to` to load an asset value into a workflow variable. The keys `asset:` / `resource:` and `asset_name:` / `resource_name:` are interchangeable.
+Six modes are supported, selected by the keys present. The keys `asset:` / `resource:` and `asset_name:` / `resource_name:` are interchangeable. `asset_name` supports `{{field}}` interpolation from `request_data`.
 
-**Write mode** — saves a workflow variable to the asset (upsert):
+**Mode summary:**
 
-```yaml
-update_asset:
-  type: "automatic"
-  name: "Update IAM Baseline Asset"
-  asset:
-    data_from: "iam_users_json"       # workflow variable → asset
-    asset_name: "gcp-iam-baseline"
-  on_complete:
-    continue_to: "approved_end"
-```
+| Keys used | Direction | Scope |
+|-----------|-----------|-------|
+| `data_to` | asset → variable | Whole `properties` blob |
+| `data_from` | variable → asset | Full replace of `properties` |
+| `field` + `data_to` | asset → variable | Single field value |
+| `field` + `data_from` | variable → asset | Single field patch (other fields untouched) |
+| `fields_to` | asset → variables | Multiple specific fields |
+| `merge_from` | variable dict → asset | Partial merge, other fields preserved |
 
-**Read mode** — loads the asset value into a workflow variable:
+---
+
+**Full read** — loads all `properties` into a workflow variable:
 
 ```yaml
 load_baseline:
   type: "automatic"
-  name: "Load IAM Baseline"
   asset:
-    data_to: "iam_users_json"         # asset → workflow variable
     asset_name: "gcp-iam-baseline"
+    data_to: "iam_users_json"         # asset.properties → request_data.iam_users_json
   on_complete:
     continue_to: "compare_step"
 ```
 
-**Asset Properties:**
-- `data_from`: Workflow variable whose value is written to the asset (write mode) - **Required if not using data_to**
-- `data_to`: Workflow variable that receives the asset value (read mode) - **Required if not using data_from**
-- `asset_name` / `resource_name`: Name of the asset to operate on - **Required**
-- `data_from` and `data_to` are mutually exclusive
+**Full write** — replaces all `properties` from a workflow variable (upsert):
+
+```yaml
+update_asset:
+  type: "automatic"
+  asset:
+    asset_name: "gcp-iam-baseline"
+    data_from: "iam_users_json"       # request_data.iam_users_json → asset.properties
+  on_complete:
+    continue_to: "approved_end"
+```
+
+**Single-field read** — loads one `properties` key into a variable:
+
+```yaml
+read_status:
+  type: automatic
+  asset:
+    asset_name: "ccp-{{product_id}}"
+    field: current_status             # reads properties.current_status
+    data_to: current_status           # optional; defaults to field name if omitted
+  on_complete:
+    continue_to: route_on_status
+```
+
+**Single-field write** — patches one `properties` key, leaves all others intact:
+
+```yaml
+update_status:
+  type: automatic
+  asset:
+    asset_name: "ccp-{{product_id}}"
+    field: current_status
+    data_from: new_status             # request_data.new_status → properties.current_status only
+  on_complete:
+    continue_to: notify_team
+```
+
+**Multi-field read** — loads several `properties` keys into separate variables:
+
+```yaml
+load_fields:
+  type: automatic
+  asset:
+    asset_name: "ccp-{{product_id}}"
+    fields_to:
+      current_status: status_var      # properties.current_status → request_data.status_var
+      last_verified_at: verified      # properties.last_verified_at → request_data.verified
+  on_complete:
+    continue_to: compare_step
+```
+
+**Partial merge write** — merges a dict into `properties`, preserving all other keys:
+
+```yaml
+partial_update:
+  type: automatic
+  asset:
+    asset_name: "ccp-{{product_id}}"
+    merge_from: update_payload        # request_data.update_payload must be a dict
+    # e.g. {"current_status": "in_control", "last_verified_at": "2025-06-18"}
+    # Keys not present in update_payload are left unchanged in properties.
+  on_complete:
+    continue_to: notify_team
+```
+
+**Asset key reference:**
+- `asset_name` / `resource_name`: Asset to operate on — **Required**. Supports `{{template}}` interpolation.
+- `data_to`: Variable to receive the read value (whole blob, or single field when `field:` is set)
+- `data_from`: Variable supplying the write value (whole replace, or single field patch when `field:` is set)
+- `field`: Scopes `data_to` / `data_from` to a single `properties` key (patch mode)
+- `fields_to`: Dict of `{field_name: variable_name}` — reads multiple individual fields at once
+- `merge_from`: Variable supplying a partial dict — shallow-merged into `properties` (other keys untouched)
 
 **Test Mode Behavior:**
-- `data_processor` (fetch): Executes normally - data is fetched and compared
-- `asset` write (`data_from`): Logs the action in history but does NOT modify the asset
-- `asset` read (`data_to`): Reads the user-scoped test copy if available, otherwise falls back to the production copy
+- `asset` write (`data_from` / `merge_from`): Logs the action in history but does NOT modify the production asset
+- `asset` read (`data_to` / `fields_to`): Reads the user-scoped test copy if available, otherwise falls back to the production copy
 
 #### 4c. Asset File Update (`asset_file:`)
 
@@ -2773,8 +2839,8 @@ STEP_TYPES = {
         },
         "asset_props": {
             "required": ["asset_name"],
-            "one_of": [["data_from"], ["data_to"]],
-            "optional": []
+            "one_of": [["data_from"], ["data_to"], ["merge_from"], ["fields_to"]],
+            "optional": ["field"]
         }
     },
     "notification": {
