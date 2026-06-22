@@ -1582,8 +1582,9 @@ Six modes are supported, selected by the keys present. The keys `asset:` / `reso
 | `data_from` | variable → asset | Full replace of `properties` |
 | `field` + `data_to` | asset → variable | Single field value |
 | `field` + `data_from` | variable → asset | Single field patch (other fields untouched) |
-| `fields_to` | asset → variables | Multiple specific fields |
+| `fields_to` | asset → variables | Multiple specific fields → separate variables |
 | `merge_from` | variable dict → asset | Partial merge, other fields preserved |
+| `fields_from` | variables → asset | Multiple variables → separate named fields |
 
 ---
 
@@ -1665,6 +1666,21 @@ partial_update:
     continue_to: notify_team
 ```
 
+**Multi-field write** — writes several variables into separate named fields, preserving all other keys:
+
+```yaml
+save_supplier_data:
+  type: automatic
+  asset:
+    asset_name: "supplier-{{supplier_id}}"
+    fields_from:
+      status: supplier_status          # request_data.supplier_status → properties.status
+      last_audit_date: audit_date      # request_data.audit_date → properties.last_audit_date
+      approved_by: current_user_email  # request_data.current_user_email → properties.approved_by
+  on_complete:
+    continue_to: notify_team
+```
+
 **Asset key reference:**
 - `asset_name` / `resource_name`: Asset to operate on — **Required**. Supports `{{template}}` interpolation.
 - `data_to`: Variable to receive the read value (whole blob, or single field when `field:` is set)
@@ -1672,10 +1688,11 @@ partial_update:
 - `field`: Scopes `data_to` / `data_from` to a single `properties` key (patch mode)
 - `fields_to`: Dict of `{field_name: variable_name}` — reads multiple individual fields at once
 - `merge_from`: Variable supplying a partial dict — shallow-merged into `properties` (other keys untouched)
+- `fields_from`: Dict of `{field_name: variable_name}` — writes each variable into the named field; other keys are preserved
 
 **Test Mode Behavior:**
-- `asset` write (`data_from` / `merge_from`): Logs the action in history but does NOT modify the production asset
-- `asset` read (`data_to` / `fields_to`): Reads the user-scoped test copy if available, otherwise falls back to the production copy
+- `asset` write (`data_from` / `merge_from` / `fields_from` / `field`+`data_from`): Writes to user-scoped sandbox copy; production asset is not modified
+- `asset` read (`data_to` / `fields_to` / `field`+`data_to`): Reads the user-scoped test copy if available, otherwise falls back to the production copy
 
 #### 4c. Asset File Update (`asset_file:`)
 
@@ -2839,7 +2856,7 @@ STEP_TYPES = {
         },
         "asset_props": {
             "required": ["asset_name"],
-            "one_of": [["data_from"], ["data_to"], ["merge_from"], ["fields_to"]],
+            "one_of": [["data_from"], ["data_to"], ["merge_from"], ["fields_to"], ["fields_from"]],
             "optional": ["field"]
         }
     },
