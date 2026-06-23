@@ -2875,6 +2875,21 @@ STEP_TYPES = {
             "Field wiring priority: explicit 'map' > named 'pass' list > auto-match by field name."
         )
     },
+    "wait_webhook": {
+        "required_props": ["source", "on_complete"],
+        "optional_props": ["match", "field_mapping", "timeout", "on_failure"],
+        "description": (
+            "Pauses workflow execution until an external service POSTs to "
+            "/api/v1/triggers/webhook/source/{source_token}. "
+            "The source token is generated once per company in System Settings → Integrations. "
+            "`source` must match the registered source name (e.g. 'odoo', 'stripe'). "
+            "`match` is load-bearing when multiple instances may be waiting — it filters the payload "
+            "against instance.request_data using a single field equality check. "
+            "`field_mapping` copies JSONPath values from the incoming payload into form fields. "
+            "`timeout.sla` sets the SLA duration; `timeout.on_timeout.continue_to` routes the step "
+            "when the SLA expires instead of escalating to a manager."
+        )
+    },
     "end": {
         "required_props": [],
         "optional_props": ["metadata", "notify_requestor"]
