@@ -2154,7 +2154,50 @@ In test mode (instance metadata `is_test_mode: true`), the spawn step logs what 
 - `on_complete`: Routing when fan-in threshold is met
 - `on_failure`: Routing when any child is rejected/failed (for `all` strategy)
 
-### 7. End Step (`end`)
+### 7. Wait Webhook Step (`wait_webhook`)
+**For pausing a workflow until an external service fires.** Blocks execution at a step until an external webhook payload arrives, then optionally captures values from the payload into form fields before advancing.
+
+Typical uses: waiting for an ERP to confirm an order, a payment gateway to confirm a transaction, a CI system to report a build result, or any process that spans system boundaries.
+
+**Setup (one-time):** Register a source token in System Settings → Integrations → Webhook Sources. Each source gets a public URL: `POST /api/v1/triggers/webhook/source/{token}`. Configure this URL in the external service (e.g. Odoo Automated Action, Stripe webhook endpoint).
+
+```yaml
+wait_so_validation:
+  type: wait_webhook
+  name: "Waiting for SO Validation"
+  source: "odoo"                      # must match a registered source name
+  match:                              # optional but strongly recommended
+    field: "so_id"                    # key in the incoming webhook payload
+    value: "{{request_data.so_id}}"  # resolved against this instance's form data
+  field_mapping:                      # optional — capture payload fields into the form
+    validation_date: "$.date_order"
+    validated_by: "$.user_id"
+  timeout:                            # optional SLA
+    sla: "3d"
+    on_timeout:
+      continue_to: escalate_unvalidated
+  on_complete:
+    continue_to: close_workflow
+  on_failure:
+    continue_to: handle_error
+```
+
+**Why `match` matters:** When multiple workflow instances are waiting on the same source, the engine evaluates `match` for every pending step. Only steps whose `match.value` equals `payload[match.field]` are resolved. Without `match`, one incoming webhook resolves every pending step for that source — which is almost never what you want.
+
+**`field_mapping`:** Same JSONPath/JSONata syntax as the `automatic` step. Values are extracted from the webhook payload and written into the instance's form data before the next step runs. Not applied when resolved via timeout.
+
+**Timeout routing:** Uses the same SLA infrastructure as decision steps. When `timeout.sla` expires, the step routes to `timeout.on_timeout.continue_to` instead of escalating to a manager.
+
+**Key Properties:**
+- `source`: Name of a registered webhook source — **Required**
+- `on_complete`: Routing when the webhook resolves the step — **Required**
+- `match.field`: Key in the incoming webhook payload to compare
+- `match.value`: Expected value (supports `{{request_data.X}}` interpolation)
+- `field_mapping`: Dict of `form_field: jsonpath_expression` to capture from the payload
+- `timeout.sla`: SLA duration string (e.g. `"3d"`, `"4h"`)
+- `timeout.on_timeout.continue_to`: Step to route to when the SLA expires
+
+### 8. End Step (`end`)
 Explicit workflow termination nodes. **RECOMMENDED** for complex workflows with multiple outcomes:
 
 ```yaml
