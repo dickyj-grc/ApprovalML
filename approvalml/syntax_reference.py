@@ -219,6 +219,7 @@ When a workflow is cron-triggered, the form fields receive their values from aut
 - `file_upload` - File attachment (supports `capture: "camera"` for mobile camera)
 - `signature` - Digital signature capture (drawing or saved signature)
 - `richtext` - Rich text editor (WYSIWYG) with HTML and image support
+- `markdown` - Markdown editor with toolbar for headings, lists, links, and formatting
 - `hidden` - **Deprecated.** Use `type: text` with `hidden: true` instead (see Field Properties below)
 - `line_items` - Dynamic table with repeating rows
 - `autocomplete` - Search-as-you-type field with data source integration
@@ -404,6 +405,20 @@ For `file_upload` fields, you can force the use of the device camera for capturi
 - Content is saved to S3/local storage as a single HTML file
 - Path structure: `companies/{company_id}/workflows/{workflow_id}/instances/{instance_id}/richtext/{field_name}.html`
 - In test mode, returns synthetic path without actual storage
+
+### Markdown Field Example
+```yaml
+- name: "notes"
+  type: "markdown"
+  label: "Notes"
+  required: false
+  placeholder: "Enter notes using Markdown..."
+```
+
+**Features:**
+- Markdown editor with toolbar (bold, italic, headings, lists, links)
+- Value stored as plain Markdown text in `request_data`
+- Rendered as formatted HTML when viewing approvals
 
 ### Advanced Field Types
 
@@ -2790,6 +2805,10 @@ FIELD_TYPES = {
     "richtext": {
         "validation": ["required"],
         "description": "Rich text editor (WYSIWYG) that supports HTML formatting and embedded images. Images are automatically converted to base64 and embedded in the HTML content. Content is saved to S3/local storage at companies/{company_id}/workflows/{workflow_id}/instances/{instance_id}/richtext/{field_name}.html"
+    },
+    "markdown": {
+        "validation": ["required", "min_length", "max_length"],
+        "description": "Markdown editor field. Supports headings, bold, italic, lists, links, and thematic breaks. Value is stored as plain Markdown text in request_data."
     },
     "line_items": {"required_props": ["item_fields"], "validation": ["min_items", "max_items"]},
     "autocomplete": {
