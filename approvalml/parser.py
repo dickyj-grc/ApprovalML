@@ -735,14 +735,6 @@ class WebhookMatch(BaseModel):
     value: str
 
 
-class WebhookCaptureItem(BaseModel):
-    """Capture configuration for wait_webhook steps"""
-    name: str
-    from_field: str = Field(alias="from")
-
-    model_config = ConfigDict(populate_by_name=True)
-
-
 class WorkflowStep(BaseModel):
     """Validation schema for workflow steps"""
     name: str
@@ -783,7 +775,6 @@ class WorkflowStep(BaseModel):
     # Webhook wait configuration (for type: wait_webhook)
     source: Optional[str] = None
     match: Optional[WebhookMatch] = None
-    capture: Optional[list[WebhookCaptureItem]] = None
 
     # Actions
     on_approve: Optional[ActionConfig] = None
