@@ -2939,16 +2939,16 @@ STEP_TYPES = {
     },
     "wait_webhook": {
         "required_props": ["source", "on_complete"],
-        "optional_props": ["match", "field_mapping", "timeout", "on_failure"],
+        "optional_props": ["match", "field_mapping", "capture", "timeout", "on_failure", "on_timeout"],
         "description": (
             "Pauses workflow execution until an external service POSTs to "
-            "/api/v1/triggers/webhook/source/{source_token}. "
+            "/api/v1/triggers/webhook/source/{source_token} or /api/v1/webhooks/receive/{slug}. "
             "The source token is generated once per company in System Settings → Integrations. "
             "`source` must match the registered source name (e.g. 'odoo', 'stripe'). "
             "`match` is load-bearing when multiple instances may be waiting — it filters the payload "
             "against instance.request_data using a single field equality check. "
-            "`field_mapping` copies JSONPath values from the incoming payload into form fields. "
-            "`timeout.sla` sets the SLA duration; `timeout.on_timeout.continue_to` routes the step "
+            "`field_mapping` or `capture` copies JSONPath values from the incoming payload into form fields. "
+            "`timeout.sla` or `timeout.duration` sets the SLA/timeout duration; `timeout.on_timeout.continue_to` routes the step "
             "when the SLA expires instead of escalating to a manager."
         )
     },

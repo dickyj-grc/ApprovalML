@@ -41,6 +41,7 @@ class StepType(str, Enum):
     AUTOMATIC = "automatic"  # For API/connector calls only
     NOTIFICATION = "notification"  # For sending notifications
     SPAWN = "spawn"  # Fan-out: one child workflow instance per line_items row
+    WAIT_WEBHOOK = "wait_webhook"  # Pauses execution and waits for webhook
     END = "end"
 
 
@@ -728,6 +729,20 @@ class DataSourceConfig(BaseModel):
         return self
 
 
+class WebhookMatch(BaseModel):
+    """Match configuration for wait_webhook steps"""
+    field: str
+    value: str
+
+
+class WebhookCaptureItem(BaseModel):
+    """Capture configuration for wait_webhook steps"""
+    name: str
+    from_field: str = Field(alias="from")
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
 class WorkflowStep(BaseModel):
     """Validation schema for workflow steps"""
     name: str
@@ -764,6 +779,11 @@ class WorkflowStep(BaseModel):
 
     # Data source configuration (for fetching external data)
     data_processor: Optional[DataSourceConfig] = None
+
+    # Webhook wait configuration (for type: wait_webhook)
+    source: Optional[str] = None
+    match: Optional[WebhookMatch] = None
+    capture: Optional[list[WebhookCaptureItem]] = None
 
     # Actions
     on_approve: Optional[ActionConfig] = None
