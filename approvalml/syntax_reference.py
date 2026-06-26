@@ -2810,7 +2810,7 @@ FIELD_TYPES = {
         "validation": ["required", "min_length", "max_length"],
         "description": "Markdown editor field. Supports headings, bold, italic, lists, links, and thematic breaks. Value is stored as plain Markdown text in request_data."
     },
-    "line_items": {"required_props": ["item_fields"], "validation": ["min_items", "max_items"]},
+    "line_items": {"requires_one_of": ["item_fields", "columns"], "validation": ["min_items", "max_items"]},
     "autocomplete": {
         "required_props": ["options"],  # Changed: now requires options instead of data_source
         "validation": ["required"],
