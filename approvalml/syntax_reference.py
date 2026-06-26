@@ -2825,6 +2825,39 @@ FIELD_TYPES = {
             "primitive": ["value_field"]
         }
     },
+    "user_lookup": {
+        "validation": ["required"],
+        "optional_props": ["options", "search", "placeholder", "display"],
+        "filter_props": ["employee_type", "department", "company_roles"],
+        "hierarchy_props": ["scope"],
+        "search_props": ["min_length", "debounce_ms", "max_results"],
+        "value_type": "object",  # Always stores {id, name, email, role, department, employee_type}
+        "description": (
+            "Internal employee/user lookup field. Searches company employees by name or email. "
+            "Value is always stored as an object snapshot {id, name, email, role, department, employee_type}. "
+            "The id is re-validated server-side against company_id on submission to prevent cross-company injection. "
+            "Filter with options.filter.employee_type (internal|external|contractor), "
+            "options.filter.department (list), options.filter.company_roles (list, OR logic). "
+            "Scope with options.hierarchy.scope (all|same_department|subordinates|direct_reports)."
+        ),
+        "yaml_example": (
+            "- name: assessment_lead\n"
+            "  type: user_lookup\n"
+            "  label: Assessment Lead\n"
+            "  required: true\n"
+            "  options:\n"
+            "    filter:\n"
+            "      employee_type: [internal]\n"
+            "      company_roles: [qa_manager, food_safety_team_leader, qa_supervisor]\n"
+            "    hierarchy:\n"
+            "      scope: all\n"
+            "  display: \"{name} — {role}, {department}\"\n"
+            "  search:\n"
+            "    min_length: 2\n"
+            "    debounce_ms: 300\n"
+            "    max_results: 20"
+        )
+    },
     "autonumber": {
         "validation": [],
         "optional_props": ["prefix", "pad_length", "start_value"],
