@@ -285,6 +285,17 @@ form:
     min_value: 1            # Alternative syntax
     max_value: 1000
 
+  # Cross-field validation (optional)
+  # These rules reference another field's value to decide whether this field
+  # is required or must be empty. Use them for mutually-exclusive controls such
+  # as "No allergens" + a structured allergen table.
+  required_unless:         # Field is required unless the referenced field equals a value
+    field: no_allergens
+    equals: true
+  empty_when:              # Field must be empty when the referenced field equals a value
+    field: no_allergens
+    equals: true
+
   # Static options (for select/radio/multiselect)
   options:
     - value: "option_key"
@@ -449,6 +460,52 @@ For `file_upload` fields, you can force the use of the device camera for capturi
       readonly: true
       calculated: true
       formula: "quantity * unit_price"
+```
+
+**Cross-field validation with line_items:**
+Use `required_unless` and `empty_when` to create mutually-exclusive controls such as
+"No allergens" checkbox + a structured allergen table.
+
+```yaml
+- name: "allergens"
+  type: "line_items"
+  label: "EU 14 Allergens"
+  min_items: 0
+  max_items: 14
+  required_unless:
+    field: no_allergens
+    equals: true
+  empty_when:
+    field: no_allergens
+    equals: true
+  item_fields:
+    - name: allergen_name
+      type: select
+      label: Allergen
+      required: true
+      options:
+        - { value: cereals_gluten, label: "Cereals containing gluten" }
+        - { value: crustaceans, label: Crustaceans }
+        - { value: eggs, label: Eggs }
+        - { value: fish, label: Fish }
+        - { value: peanuts, label: Peanuts }
+        - { value: soybeans, label: Soybeans }
+        - { value: milk, label: "Milk / Lactose" }
+        - { value: tree_nuts, label: "Tree nuts" }
+        - { value: celery, label: Celery }
+        - { value: mustard, label: Mustard }
+        - { value: sesame, label: Sesame seeds }
+        - { value: sulphites, label: "Sulphur dioxide / Sulphites" }
+        - { value: lupin, label: Lupin }
+        - { value: molluscs, label: Molluscs }
+    - name: presence
+      type: select
+      label: Presence
+      required: true
+      options:
+        - { value: intentionally_present, label: "Intentionally present" }
+        - { value: may_contain, label: "May contain (cross-contact)" }
+        - { value: not_present, label: "Not present" }
 ```
 
 #### Calculated Fields with JSONata (Top-Level Form Fields)
@@ -2766,6 +2823,11 @@ This syntax reference should enable AI engines to generate valid ApprovalML work
 """
 
 # Field type definitions for validation
+# Cross-field validation rules that are valid for every field type.
+# They live at field root level (alongside name/type/required) and reference
+# another field's value to decide whether this field is required or must be empty.
+CROSS_FIELD_VALIDATION = ["required_unless", "empty_when"]
+
 FIELD_TYPES = {
     "text": {"validation": ["min_length", "max_length", "pattern"]},
     "textarea": {"validation": ["min_length", "max_length", "rows"]},
@@ -3025,7 +3087,13 @@ def get_field_types() -> dict:
     Returns:
         dict: Field type definitions
     """
-    return FIELD_TYPES
+    merged = {}
+    for name, defn in FIELD_TYPES.items():
+        merged[name] = dict(defn)
+        merged[name]["validation"] = list(
+            set(defn.get("validation", []) + CROSS_FIELD_VALIDATION)
+        )
+    return merged
 
 def get_step_types() -> dict:
     """
