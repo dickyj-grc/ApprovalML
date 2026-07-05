@@ -3081,6 +3081,21 @@ STEP_TYPES = {
             "when the SLA expires instead of escalating to a manager."
         )
     },
+    "asset": {
+        "required_props": ["asset_name"],
+        "optional_props": [
+            "name", "on_complete", "on_failure",
+            "fields_from", "fields_to", "data_from", "data_to",
+            "field", "merge_from", "list_by_category", "bulk_upsert", "delete",
+        ],
+        "description": (
+            "Reads or writes values between workflow variables and an asset registry record. "
+            "Flat form of 'type: automatic' + 'asset:' block — asset_name and direction keys are "
+            "at the top level. Direction: fields_from (vars→asset), fields_to (asset→vars), "
+            "data_from (var→asset full replace), data_to (asset→var full read), "
+            "field+data_from/data_to (single-field), merge_from (partial merge)."
+        )
+    },
     "end": {
         "required_props": [],
         "optional_props": ["metadata", "notify_requestor"]
