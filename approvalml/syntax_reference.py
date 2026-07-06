@@ -3017,6 +3017,15 @@ STEP_TYPES = {
             "optional": ["field"]
         }
     },
+    "asset": {
+        "required_props": ["asset", "on_complete"],
+        "optional_props": ["on_failure"],
+        "asset_props": {
+            "required": ["asset_name"],
+            "one_of": [["data_from"], ["data_to"], ["merge_from"], ["fields_to"], ["fields_from"]],
+            "optional": ["category", "field"]
+        }
+    },
     "notification": {
         "required_props": ["recipients", "notification", "on_complete"],
         "optional_props": []
