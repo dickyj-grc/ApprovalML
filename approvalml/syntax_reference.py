@@ -2093,6 +2093,10 @@ fetch_invoice_data:
     invoice_no: "$.invoice.name"
     invoice_date: "$.invoice.invoice_date"
 
+    # Constant/literal assignment
+    status:
+      value: "draft"
+
     # JSONata transformations
     product_name:
       source: "$.product.name"
@@ -2120,6 +2124,7 @@ fetch_invoice_data:
 - Keys are form field names (must exist in `form.fields`)
 - Values can be:
   - String: JSONPath expression (e.g., `"$.customer.name"`)
+  - Dict with `value`: Assign a constant/literal directly (string, number, boolean, list, dict)
   - Dict with `source` + `jsonata`: Extract then transform
   - Dict with `jsonata` only: Transform using entire payload
   - Dict with `source` + `item_fields`: Map array to line_items
@@ -2128,6 +2133,24 @@ fetch_invoice_data:
 - Missing paths are skipped with warnings logged
 - Errors don't block workflow execution (fault-tolerant)
 - Can be combined with `data_processor` or `resource` on the same step
+
+**Constant values with `value`:**
+Use the `value` key when you want to assign a literal constant to a form field without fetching data:
+
+```yaml
+set_defaults:
+  type: automatic
+  name: "Set default values"
+  field_mapping:
+    company_name:
+      value: "Acme Inc"
+    tax_rate:
+      value: 0.11
+    is_urgent:
+      value: false
+  on_complete:
+    continue_to: submit_request
+```
 
 **JSONPath root when `data_processor` and `field_mapping` are on the same step:**
 When a step has both `data_processor` (with `save_to`) and `field_mapping`, the JSONPath expressions are evaluated against the raw API response object — **not** against `request_data`.
