@@ -300,6 +300,8 @@ form:
   options:
     - value: "option_key"
       label: "Display Text"
+  # Or use the shorthand when value and label are the same:
+  # options: ["operations", "marketing", "sales", "hr", "it", "finance"]
 
   # OR dynamic options from data source:
   # options:
