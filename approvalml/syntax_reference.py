@@ -2224,6 +2224,9 @@ process_vendor_invoices:
     vendor_name: "vendor"
     invoice_amount: "amount"
     invoice_date: "date"
+  return:                              # Values from each child written back into the parent row
+    approved_total: "total_approved"   # child request_data.approved_total → row.total_approved
+    approver_name: "approved_by"       # child request_data.approver_name   → row.approved_by
   on_complete:
     continue_to: "final_review"
   on_failure:
@@ -2232,15 +2235,21 @@ process_vendor_invoices:
 
 **Fan-in Strategies (`wait_for`):**
 - `all` *(default)* — parent advances only when **every** child instance has completed
-- `any` — parent advances as soon as **at least one** child completes
+- `any` — parent advances as soon as **first** child completes
 - `none` — fire-and-forget; parent advances immediately after spawning all children
 
 **Field Mapping (`pass` and `map`):**
 - `pass`: List of top-level field names to copy verbatim from the parent into each child's `request_data`
 - `map`: Dict of `row_field: child_field` — values come from each individual line item row
 
+**Return Values (`return`):**
+- `return`: Dict of `child_field: target_row_field` — values are copied from each completed child instance back into the corresponding row of the parent's `items` field.
+- Only applied when the spawn resolves with `outcome='complete'` (i.e. all required children finished successfully).
+- Rows without a completed child (e.g. with `wait_for: any`) are left unchanged.
+- If a child field is missing or `None`, the target row field is left unchanged.
+
 **Test Mode Behavior:**
-In test mode (instance metadata `is_test_mode: true`), the spawn step logs what it *would* spawn without creating real child instances. The coordinator step is immediately approved and `on_complete` routing is followed.
+In test mode (instance metadata `is_test_mode: true`), the spawn step logs what it *would* spawn without creating real child instances. The coordinator step is immediately approved and `on_complete` routing is followed. Because no real children run, `return` values are not applied in test mode.
 
 **Key Properties:**
 - `workflow`: Name of the child workflow to spawn — **Required**
@@ -2248,6 +2257,7 @@ In test mode (instance metadata `is_test_mode: true`), the spawn step logs what 
 - `wait_for`: Fan-in strategy (`all` | `any` | `none`) — default `all`
 - `pass`: List of parent field names to copy into each child
 - `map`: Dict mapping row fields to child request_data field names
+- `return`: Dict mapping child field names to parent item row field names
 - `on_complete`: Routing when fan-in threshold is met
 - `on_failure`: Routing when any child is rejected/failed (for `all` strategy)
 
