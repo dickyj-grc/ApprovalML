@@ -49,17 +49,26 @@ class SmtpEmailSender(EmailSender):
         subject = f"Approval Required: {description[:80]}"
         text_body = self._text_body(description, approve_url, reject_url, context)
         html_body = self._html_body(description, approve_url, reject_url, context)
+        self.send_notification(to_email, subject, html_body, text_body)
 
+    def send_notification(
+        self,
+        to_email: str,
+        subject: str,
+        body: str,
+        text_body: Optional[str] = None,
+    ) -> None:
+        """Send a plain notification email. Falls back to stdout when SMTP is unconfigured."""
         if not self.smtp_host or not self.smtp_user:
-            self._stdout_fallback(to_email, subject, text_body)
+            self._stdout_fallback(to_email, subject, text_body or body)
             return
 
         msg = MIMEMultipart("alternative")
         msg["Subject"] = subject
         msg["From"] = f"{self.from_name} <{self.from_addr}>"
         msg["To"] = to_email
-        msg.attach(MIMEText(text_body, "plain"))
-        msg.attach(MIMEText(html_body, "html"))
+        msg.attach(MIMEText(text_body or body, "plain"))
+        msg.attach(MIMEText(body, "html"))
 
         try:
             with smtplib.SMTP(self.smtp_host, self.smtp_port) as smtp:
@@ -71,7 +80,7 @@ class SmtpEmailSender(EmailSender):
                 smtp.sendmail(self.from_addr, [to_email], msg.as_string())
         except Exception as exc:
             print(f"[ApprovalML] SMTP send failed to {to_email}: {exc}")
-            self._stdout_fallback(to_email, subject, text_body)
+            self._stdout_fallback(to_email, subject, text_body or body)
 
     # ── private helpers ───────────────────────────────────────────────────────
 

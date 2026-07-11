@@ -214,3 +214,42 @@ class EmailSender(ABC):
         context: Optional[dict[str, Any]] = None,
     ) -> None:
         """Send the approval-request email. Must not raise — log and continue on failure."""
+
+
+class NotificationBackend(ABC):
+    """
+    Multi-channel notification backend for `type: notification` workflow steps.
+
+    Implementations receive a channel slug, a recipient handle, and a channel-
+    agnostic message dict. They are responsible for resolving credentials and
+    delivering the message. The backend must not raise for delivery failures;
+    it should return (success, error_message_or_none).
+
+    The standalone runtime provides `EnvNotificationBackend` which reads channel
+    credentials from environment variables. The SaaS backend provides its own
+    implementation that looks up per-employee preferences and company-scoped
+    credentials.
+    """
+
+    @abstractmethod
+    async def send(
+        self,
+        *,
+        channel: str,
+        recipient: str,
+        message: dict[str, Any],
+    ) -> tuple[bool, Optional[str]]:
+        """
+        Send one notification.
+
+        Args:
+            channel: Channel slug, e.g. 'email', 'slack'.
+            recipient: Channel-specific recipient handle (email address, channel
+                name, user id, webhook URL, etc.).
+            message: Dict with at least 'subject' and 'body'. May include
+                'text_body', 'action_url', and 'context'.
+
+        Returns:
+            (success, error_message). error_message is None on success.
+        """
+        pass

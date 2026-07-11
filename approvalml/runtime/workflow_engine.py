@@ -19,8 +19,9 @@ from __future__ import annotations
 import logging
 from typing import Any, Optional
 
-from .base import WorkflowStore, WorkflowInstance, WorkflowStepRecord, EmailSender
+from .base import WorkflowStore, WorkflowInstance, WorkflowStepRecord, EmailSender, NotificationBackend
 from .engine import ApprovalEngine
+from .notifications import NotificationDispatcher
 
 logger = logging.getLogger(__name__)
 
@@ -37,9 +38,11 @@ class WorkflowEngine(ApprovalEngine):
         store: WorkflowStore,
         email: EmailSender,
         server_url: str,
+        notification_backend: Optional[NotificationBackend] = None,
     ) -> None:
         super().__init__(store, email, server_url)
         self.wstore = store  # typed reference for workflow-specific methods
+        self.notification_backend = notification_backend or NotificationDispatcher()
 
     # ── Public API ─────────────────────────────────────────────────────────────
 
@@ -286,15 +289,21 @@ class WorkflowEngine(ApprovalEngine):
         recipients = _resolve_notification_recipients(step_def, form_data)
         msg = step_def.notification.message if step_def.notification else None
 
-        for email_addr in recipients:
-            if msg:
-                self.email.send_approval_request(
-                    email_addr,
-                    msg.subject,
-                    approve_url="",
-                    reject_url="",
-                    context={"body": msg.body, "form_data": form_data},
-                )
+        if msg:
+            message = {
+                "subject": _resolve_template(msg.subject, form_data),
+                "body": _resolve_template(msg.body, form_data),
+                "action_url": "",
+            }
+            for recipient in recipients:
+                try:
+                    await self.notification_backend.send(
+                        channel=recipient.get("channel", "email"),
+                        recipient=recipient.get("to", ""),
+                        message=message,
+                    )
+                except Exception as e:
+                    logger.warning(f"Notification step '{step_name}' delivery failed: {e}")
 
         step_record = await self.wstore.create_step(
             instance.id, step_name, "notification", None,
@@ -550,11 +559,23 @@ def _evaluate_choices(step_def: Any, form_data: dict[str, Any]) -> Optional[str]
     return None
 
 
-def _resolve_notification_recipients(step_def: Any, form_data: dict[str, Any]) -> list[str]:
-    emails: list[str] = []
+def _resolve_notification_recipients(step_def: Any, form_data: dict[str, Any]) -> list[dict[str, Any]]:
+    """
+    Resolve notification recipients from a `type: notification` step.
+
+    Returns a list of dicts like {"channel": "email", "to": "user@example.com"}.
+    Channel defaults to "email" when not specified.
+    """
+    recipients: list[dict[str, Any]] = []
     if not step_def.recipients:
-        return emails
+        return recipients
     for r in step_def.recipients:
+        channel = getattr(r, "channel", None) or "email"
+        to = None
         if r.email:
-            emails.append(_resolve_template(r.email, form_data))
-    return [e for e in emails if e and "@" in e]
+            to = _resolve_template(r.email, form_data)
+        elif getattr(r, "to", None):
+            to = _resolve_template(r.to, form_data)
+        if to:
+            recipients.append({"channel": channel, "to": to})
+    return recipients

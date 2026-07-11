@@ -2203,9 +2203,14 @@ notify_completion:
 5. Supports multi-channel delivery (email + Slack, etc.)
 
 **Recipient Types:**
-- `email: "user@example.com"` or `email: "${instance.requester_email}"` - Direct email
+- `email: "user@example.com"` or `email: "${instance.requester_email}"` - Direct email (channel defaults to email)
 - `role: "finance_team"` - All users with this role
 - `user_id: 123` - Specific user by ID
+- `channel: "slack"` + `to: "#approvals"` - Send to a specific channel or user
+- `channel: "teams"` + `to: "..."` - Send via Teams webhook (credentials from environment or SaaS config)
+
+The `channel` and `to` keys override the default email channel and let the open-core runtime
+send notifications through any supported adapter when credentials are configured.
 
 ### 6. Spawn Step (`spawn`)
 **For fan-out sub-workflow execution.** Creates one child workflow instance per row in a `line_items` field, then fans back in when the required number of children complete.

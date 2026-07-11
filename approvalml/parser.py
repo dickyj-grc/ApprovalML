@@ -608,10 +608,12 @@ class ActionConfig(BaseModel):
 
 
 class NotificationRecipient(BaseModel):
-    """Recipient configuration for notifications"""
-    email: Optional[str] = None  # Specific email or variable like ${instance.requester_email}
-    role: Optional[str] = None   # Role name like "finance_team"
-    user_id: Optional[int] = None  # Specific user ID
+    """Recipient configuration for notifications."""
+    email: Optional[str] = None      # Specific email or variable like ${instance.requester_email}
+    role: Optional[str] = None       # Role name like "finance_team"
+    user_id: Optional[int] = None    # Specific user ID
+    channel: Optional[str] = "email" # Channel slug (email, slack, teams, etc.)
+    to: Optional[str] = None         # Channel-specific handle (overrides email when set)
 
 
 class NotificationMessage(BaseModel):

@@ -6,7 +6,8 @@ Start with: approvalml serve
 """
 from .engine import ApprovalEngine
 from .workflow_engine import WorkflowEngine
-from .base import ApprovalStore, WorkflowStore, EmailSender, ApprovalGate, WorkflowInstance, WorkflowStepRecord, UserToken
+from .base import ApprovalStore, WorkflowStore, EmailSender, ApprovalGate, WorkflowInstance, WorkflowStepRecord, UserToken, NotificationBackend
+from .env_notifications import EnvNotificationBackend
 
 __all__ = [
     "ApprovalEngine",
@@ -17,4 +18,7 @@ __all__ = [
     "ApprovalGate",
     "WorkflowInstance",
     "WorkflowStepRecord",
+    "UserToken",
+    "NotificationBackend",
+    "EnvNotificationBackend",
 ]

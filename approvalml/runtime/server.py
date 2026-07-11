@@ -418,6 +418,7 @@ def start(
     import uvicorn
     from .postgres_store import PostgresWorkflowStore
     from .email_smtp import SmtpEmailSender
+    from .env_notifications import EnvNotificationBackend
 
     global _engine, _workflows_dir_at_startup, _tokens_to_seed
 
@@ -432,10 +433,12 @@ def start(
     if api_token:
         os.environ["APPROVALML_API_TOKEN"] = api_token
 
+    smtp_sender = SmtpEmailSender()
     _engine = WorkflowEngine(
         store=PostgresWorkflowStore(dsn=resolved_db_url),
-        email=SmtpEmailSender(),
+        email=smtp_sender,
         server_url=resolved_server_url,
+        notification_backend=EnvNotificationBackend(email_sender=smtp_sender),
     )
 
     _workflows_dir_at_startup = workflows_dir or os.environ.get("WORKFLOWS_DIR", "") or None
