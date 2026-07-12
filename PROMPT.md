@@ -782,10 +782,10 @@ routing_step:
 ```
 
 ### 4. Automatic Steps (`automatic`)
-**For data fetching and resource updates.** System processing without human interaction.
+**For data fetching and asset updates.** System processing without human interaction.
 
 #### 4a. Data Source Fetch (Read)
-Fetch data from a configured data source and optionally compare against a baseline resource:
+Fetch data from a configured data source and optionally compare against a baseline asset:
 
 ```yaml
 fetch_iam_data:
@@ -794,7 +794,7 @@ fetch_iam_data:
   data_source:
     source_id: "src_cff5797288f440d7"  # Data source unique ID (connector is implicit)
     save_to: "iam_users_json"           # Save fetched data to this form field
-    compare_to_asset: "gcp-iam-baseline"  # Optional: compare with resource baseline
+    compare_to_asset: "gcp-iam-baseline"  # Optional: compare with asset baseline
     save_diff_to: "deepdiff_gcs"        # Optional: save diff result to this field
     ignore_keys: []                     # Optional: keys to ignore in comparison
   on_complete:
@@ -835,45 +835,45 @@ fetch_iam_data:
 - Fields containing emphasized text get an amber background to draw attention
 - Use this for important values that approvers need to review carefully
 
-#### 4b. Resource Update / Load (`resource:` / `asset:`)
-Two directions are supported. Use `data_from` to write a workflow variable into a resource, or `data_to` to load a resource value into a workflow variable. The keys `resource:` / `asset:` and `resource_name:` / `asset_name:` are interchangeable.
+#### 4b. Asset Update / Load (`asset:`)
+Two directions are supported. Use `data_from` to write a workflow variable into an asset, or `data_to` to load an asset value into a workflow variable. `asset_name` supports `{{field}}` interpolation from `request_data`.
 
-**Write mode** — saves a workflow variable to the resource (upsert):
+**Write mode** — saves a workflow variable to the asset (upsert):
 
 ```yaml
-update_resource:
+update_asset:
   type: "automatic"
-  name: "Update IAM Baseline Resource"
-  resource:
-    data_from: "iam_users_json"       # workflow variable → resource
-    resource_name: "gcp-iam-baseline"
+  name: "Update IAM Baseline Asset"
+  asset:
+    data_from: "iam_users_json"       # workflow variable → asset
+    asset_name: "gcp-iam-baseline"
   on_complete:
     continue_to: "approved_end"
 ```
 
-**Read mode** — loads the resource value into a workflow variable:
+**Read mode** — loads the asset value into a workflow variable:
 
 ```yaml
 load_baseline:
   type: "automatic"
   name: "Load IAM Baseline"
-  resource:
-    data_to: "iam_users_json"         # resource → workflow variable
+  asset:
+    data_to: "iam_users_json"         # asset → workflow variable
     asset_name: "gcp-iam-baseline"
   on_complete:
     continue_to: "compare_step"
 ```
 
-**Resource Properties:**
-- `data_from`: Workflow variable whose value is written to the resource (write mode) - **Required if not using data_to**
-- `data_to`: Workflow variable that receives the resource value (read mode) - **Required if not using data_from**
-- `resource_name` / `asset_name`: Name of the resource to operate on - **Required**
+**Asset Properties:**
+- `data_from`: Workflow variable whose value is written to the asset (write mode) - **Required if not using data_to**
+- `data_to`: Workflow variable that receives the asset value (read mode) - **Required if not using data_from**
+- `asset_name`: Name of the asset to operate on - **Required**
 - `data_from` and `data_to` are mutually exclusive
 
 **Test Mode Behavior:**
 - `data_source` / `data_processor` (fetch): Executes normally - data is fetched and compared
-- `resource` write (`data_from`): Logs the action in history but does NOT modify the resource
-- `resource` read (`data_to`): Reads the user-scoped test copy if available, otherwise falls back to the production copy
+- `asset` write (`data_from`): Logs the action in history but does NOT modify the asset
+- `asset` read (`data_to`): Reads the user-scoped test copy if available, otherwise falls back to the production copy
 
 **Important:** `type: automatic` should ONLY be used for data operations. For sending notifications, use `type: notification` instead.
 

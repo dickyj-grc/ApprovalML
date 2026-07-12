@@ -1645,8 +1645,8 @@ fetch_new_records:
 - Fields containing emphasized text get an amber background to draw attention
 - Use this for important values that approvers need to review carefully
 
-#### 4b. Asset Update / Load (`asset:` / `resource:`)
-Six modes are supported, selected by the keys present. The keys `asset:` / `resource:` and `asset_name:` / `resource_name:` are interchangeable. `asset_name` supports `{{field}}` interpolation from `request_data`.
+#### 4b. Asset Update / Load (`asset:`)
+Six modes are supported, selected by the keys present. `asset_name` supports `{{field}}` interpolation from `request_data`.
 
 **Mode summary:**
 
@@ -1756,7 +1756,7 @@ save_supplier_data:
 ```
 
 **Asset key reference:**
-- `asset_name` / `resource_name`: Asset to operate on — **Required**. Supports `{{template}}` interpolation.
+- `asset_name`: Asset to operate on — **Required**. Supports `{{template}}` interpolation.
 - `data_to`: Variable to receive the read value (whole blob, or single field when `field:` is set)
 - `data_from`: Variable supplying the write value (whole replace, or single field patch when `field:` is set)
 - `field`: Scopes `data_to` / `data_from` to a single `properties` key (patch mode)
@@ -2134,7 +2134,7 @@ fetch_invoice_data:
 - A step with only `field_mapping` (no `data_processor`) is valid and reads from `request_data` directly — used as Pass 3 in the three-pass lookup pattern
 - Missing paths are skipped with warnings logged
 - Errors don't block workflow execution (fault-tolerant)
-- Can be combined with `data_processor` or `resource` on the same step
+- Can be combined with `data_processor` or `asset` on the same step
 
 **Constant values with `value`:**
 Use the `value` key when you want to assign a literal constant to a form field without fetching data:
@@ -3092,13 +3092,26 @@ STEP_TYPES = {
         }
     },
     "asset": {
-        "required_props": ["asset", "on_complete"],
-        "optional_props": ["on_failure"],
+        "required_props": ["on_complete"],
+        "optional_props": [
+            "name", "asset", "asset_name",
+            "on_failure", "category", "field",
+            "fields_from", "fields_to", "data_from", "data_to",
+            "merge_from", "list_by_category", "bulk_upsert", "delete",
+        ],
         "asset_props": {
             "required": ["asset_name"],
             "one_of": [["data_from"], ["data_to"], ["merge_from"], ["fields_to"], ["fields_from"]],
             "optional": ["category", "field"]
-        }
+        },
+        "description": (
+            "Reads or writes values between workflow variables and an asset registry record. "
+            "Flat form: asset_name and direction keys sit at the step top level. "
+            "Wrapped form: type: asset with an asset: block. "
+            "Direction: fields_from (vars→asset), fields_to (asset→vars), "
+            "data_from (var→asset full replace), data_to (asset→var full read), "
+            "field+data_from/data_to (single-field), merge_from (partial merge)."
+        )
     },
     "notification": {
         "required_props": ["recipients", "notification", "on_complete"],
@@ -3128,21 +3141,6 @@ STEP_TYPES = {
             "`field_mapping` copies JSONPath values from the incoming payload into form fields. "
             "`timeout.sla` or `timeout.duration` sets the SLA/timeout duration; `timeout.on_timeout.continue_to` routes the step "
             "when the SLA expires instead of escalating to a manager."
-        )
-    },
-    "asset": {
-        "required_props": ["asset_name"],
-        "optional_props": [
-            "name", "on_complete", "on_failure",
-            "fields_from", "fields_to", "data_from", "data_to",
-            "field", "merge_from", "list_by_category", "bulk_upsert", "delete",
-        ],
-        "description": (
-            "Reads or writes values between workflow variables and an asset registry record. "
-            "Flat form of 'type: automatic' + 'asset:' block — asset_name and direction keys are "
-            "at the top level. Direction: fields_from (vars→asset), fields_to (asset→vars), "
-            "data_from (var→asset full replace), data_to (asset→var full read), "
-            "field+data_from/data_to (single-field), merge_from (partial merge)."
         )
     },
     "end": {
