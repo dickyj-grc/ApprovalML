@@ -408,16 +408,27 @@ class WorkflowEngine(ApprovalEngine):
             return  # still waiting
 
         # Mark parent and remaining children as skipped
+        pending_child_ids = [c.id for c in children if c.status == "pending"]
         pool = self.wstore._pool_or_raise()
         async with pool.acquire() as conn:
-            await conn.execute(
-                """UPDATE workflow_steps SET status=$1 WHERE parent_step_id=$2 AND status='pending'""",
-                "skipped", parent.id,
-            )
-            await conn.execute(
-                "UPDATE workflow_steps SET status=$1 WHERE id=$2",
-                outcome, parent.id,
-            )
+            async with conn.transaction():
+                await conn.execute(
+                    """UPDATE workflow_steps SET status=$1 WHERE parent_step_id=$2 AND status='pending'""",
+                    "skipped", parent.id,
+                )
+                await conn.execute(
+                    "UPDATE workflow_steps SET status=$1 WHERE id=$2",
+                    outcome, parent.id,
+                )
+                for child_id in pending_child_ids:
+                    await self.wstore._append_audit(
+                        conn, "step", child_id, "skipped",
+                        {"reason": f"parallel_approval resolved as {outcome}"},
+                    )
+                await self.wstore._append_audit(
+                    conn, "step", parent.id, outcome,
+                    {"strategy": strategy, "approved": approved, "rejected": rejected, "total": total},
+                )
 
         # Look up the parent step definition (parallel_approval step)
         parent_step_def = workflow.get(parent.step_name)
@@ -475,31 +486,84 @@ def _find_entry_step(workflow: dict) -> Optional[str]:
 
 
 def _resolve_approvers(step_def: Any, form_data: dict[str, Any]) -> list[str]:
-    """Extract approver email addresses from a step definition."""
+    """
+    Extract approver email addresses from a step definition.
+
+    A bare, non-templated string that isn't a literal email (e.g.
+    `approver: finance_manager`) is treated as a role name. The SaaS backend
+    resolves roles against a company org directory; the standalone runtime
+    has none, so it resolves them via the APPROVALML_ROLE_<NAME> environment
+    variable convention instead — see _resolve_role.
+    """
     emails: list[str] = []
 
-    # shorthand: approver: email@example.com
+    def _add_string_approver(raw: str) -> None:
+        resolved = _resolve_template(raw, form_data)
+        if "@" in resolved:
+            emails.append(resolved)
+        elif not _is_unresolved_template(resolved):
+            emails.extend(_resolve_role(resolved))
+        # else: template placeholder didn't resolve — drop silently, as before.
+
+    # shorthand: approver: email@example.com  |  approver: role_name
     if step_def.approver:
         raw = step_def.approver
         if isinstance(raw, str):
-            emails.append(_resolve_template(raw, form_data))
+            _add_string_approver(raw)
         elif isinstance(raw, dict) and "email" in raw:
             emails.append(_resolve_template(raw["email"], form_data))
 
-    # full list: approvers: [{approver: email}, ...]
+    # full list: approvers: [{approver: email | role_name}, {role: role_name}, ...]
     if step_def.approvers:
         for cfg in step_def.approvers:
             if cfg.approver:
                 if isinstance(cfg.approver, str):
-                    emails.append(_resolve_template(cfg.approver, form_data))
+                    _add_string_approver(cfg.approver)
                 elif hasattr(cfg.approver, "email"):
                     emails.append(_resolve_template(cfg.approver.email, form_data))
             elif cfg.dynamic_approver:
                 resolved = _resolve_template(cfg.dynamic_approver, form_data)
                 if resolved != cfg.dynamic_approver:  # successfully resolved
                     emails.append(resolved)
+            elif cfg.role:
+                emails.extend(_resolve_role(cfg.role))
 
     return [e for e in emails if e and "@" in e]
+
+
+def _is_unresolved_template(s: str) -> bool:
+    """True if s is still a raw ${...} placeholder (template substitution found no matching key)."""
+    return s.startswith("${") and s.endswith("}")
+
+
+def _role_env_var(role: str) -> str:
+    """Convert a role name to its environment variable name: APPROVALML_ROLE_<SANITIZED>."""
+    import re
+    sanitized = re.sub(r"[^A-Za-z0-9]+", "_", role).strip("_").upper()
+    return f"APPROVALML_ROLE_{sanitized}"
+
+
+def _resolve_role(role: str) -> list[str]:
+    """
+    Resolve a role name to approver emails via APPROVALML_ROLE_<NAME>, a
+    comma-separated list. This is a static, opt-in substitute for Aptiwise's
+    organization-based role resolution — it has no concept of org hierarchy
+    or per-department scoping, just a fixed name-to-emails mapping.
+
+    Raises WorkflowError if the env var is unset — a role-based step with no
+    approvers would otherwise create zero decision records and hang forever
+    with no way to complete it.
+    """
+    import os
+    env_var = _role_env_var(role)
+    raw = os.environ.get(env_var)
+    if not raw:
+        raise WorkflowError(
+            f"Approver role '{role}' could not be resolved — set "
+            f"{env_var}=email1,email2 in your environment, or use a literal "
+            f"email / ${{form.field}} template instead."
+        )
+    return [e.strip() for e in raw.split(",") if e.strip()]
 
 
 def _resolve_template(tmpl: str, form_data: dict[str, Any]) -> str:

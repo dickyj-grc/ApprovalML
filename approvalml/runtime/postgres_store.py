@@ -15,8 +15,15 @@ from typing import Any, Optional
 
 import asyncpg
 
+from ..audit_hash import compute_entry_hash, serialize_value
 from .base import ApprovalStore, ApprovalGate, WorkflowStore, WorkflowInstance, WorkflowStepRecord, UserToken
 
+# Fixed entity_id for the one-time chain genesis row (see _seed_audit_genesis).
+_GENESIS_ENTITY_ID = "00000000-0000-0000-0000-000000000000"
+
+# Arbitrary fixed key scoping the pg_advisory_xact_lock that serializes all
+# writers to the global audit chain (see PostgresStore._append_audit).
+_AUDIT_CHAIN_LOCK_KEY = 8817364529
 
 # ── DDL ────────────────────────────────────────────────────────────────────────
 
@@ -90,6 +97,27 @@ CREATE TABLE IF NOT EXISTS workflow_steps (
 );
 """
 
+# A single global hash chain covering every approval action (gate/instance/step
+# creation and decisions) — not scoped per entity. prev_hash is the entry_hash
+# of whatever row was inserted immediately before it, system-wide; only the
+# genesis row (seeded once in _seed_audit_genesis) has prev_hash = NULL.
+_CREATE_AUDIT_LOG = """
+CREATE TABLE IF NOT EXISTS audit_log (
+    id          BIGSERIAL   PRIMARY KEY,
+    entity_type TEXT        NOT NULL,
+    entity_id   UUID        NOT NULL,
+    event_type  TEXT        NOT NULL,
+    event_data  JSONB       NOT NULL DEFAULT '{}',
+    actor       TEXT,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    prev_hash   TEXT,
+    entry_hash  TEXT        NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_audit_log_entity ON audit_log (entity_type, entity_id);
+"""
+
+_AUDIT_FIELD_NAMES = ["entity_type", "entity_id", "event_type", "event_data", "actor", "created_at"]
+
 
 class PostgresStore(ApprovalStore):
     """Approval gate storage backed by a single PostgreSQL table."""
@@ -102,6 +130,8 @@ class PostgresStore(ApprovalStore):
         self._pool = await asyncpg.create_pool(self.dsn, min_size=1, max_size=10)
         async with self._pool.acquire() as conn:
             await conn.execute(_CREATE_APPROVAL_GATES)
+            await conn.execute(_CREATE_AUDIT_LOG)
+            await self._seed_audit_genesis(conn)
 
     async def close(self) -> None:
         if self._pool:
@@ -112,6 +142,73 @@ class PostgresStore(ApprovalStore):
         if self._pool is None:
             raise RuntimeError("PostgresStore not initialized — call initialize() first")
         return self._pool
+
+    @staticmethod
+    async def _seed_audit_genesis(conn: asyncpg.Connection) -> None:
+        """Insert the chain's first row once, so _append_audit always has a row to lock."""
+        created_at = datetime(1970, 1, 1, tzinfo=timezone.utc)
+        fields = {
+            "entity_type": "system",
+            "entity_id": _GENESIS_ENTITY_ID,
+            "event_type": "genesis",
+            "event_data": {},
+            "actor": None,
+            "created_at": serialize_value(created_at),
+        }
+        entry_hash = compute_entry_hash(fields, None)
+        await conn.execute(
+            """INSERT INTO audit_log
+                   (entity_type, entity_id, event_type, event_data, actor, created_at, prev_hash, entry_hash)
+               SELECT 'system', $1, 'genesis', '{}'::jsonb, NULL, $2, NULL, $3
+               WHERE NOT EXISTS (SELECT 1 FROM audit_log)""",
+            _GENESIS_ENTITY_ID, created_at, entry_hash,
+        )
+
+    @staticmethod
+    async def _append_audit(
+        conn: asyncpg.Connection,
+        entity_type: str,
+        entity_id: str,
+        event_type: str,
+        event_data: dict[str, Any],
+        actor: Optional[str] = None,
+    ) -> None:
+        """
+        Append one row to the global audit chain. Must be called on the same
+        `conn` as — and inside the same transaction as — the entity's own
+        state write, so the two commit or roll back together.
+
+        Serialization: `SELECT ... ORDER BY id DESC LIMIT 1 FOR UPDATE` is
+        NOT sufficient here — when a blocked FOR UPDATE query unblocks after
+        the blocking transaction commits, Postgres re-checks the same
+        physical row it already selected rather than re-running the
+        ORDER BY/LIMIT, so two concurrent writers can both lock the same
+        stale "last row" and fork the chain. A `pg_advisory_xact_lock`
+        (held for the rest of this transaction) forces the read to happen
+        only after a writer has exclusive access to the append operation.
+        """
+        await conn.execute("SELECT pg_advisory_xact_lock($1)", _AUDIT_CHAIN_LOCK_KEY)
+        created_at = datetime.now(timezone.utc)
+        prev_row = await conn.fetchrow(
+            "SELECT entry_hash FROM audit_log ORDER BY id DESC LIMIT 1"
+        )
+        prev_hash = prev_row["entry_hash"] if prev_row else None
+        fields = {
+            "entity_type": entity_type,
+            "entity_id": str(entity_id),
+            "event_type": event_type,
+            "event_data": event_data,
+            "actor": actor,
+            "created_at": serialize_value(created_at),
+        }
+        entry_hash = compute_entry_hash(fields, prev_hash)
+        await conn.execute(
+            """INSERT INTO audit_log
+                   (entity_type, entity_id, event_type, event_data, actor, created_at, prev_hash, entry_hash)
+               VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8)""",
+            entity_type, str(entity_id), event_type, json.dumps(event_data),
+            actor, created_at, prev_hash, entry_hash,
+        )
 
     @staticmethod
     def _row_to_gate(row: asyncpg.Record) -> ApprovalGate:
@@ -144,19 +241,25 @@ class PostgresStore(ApprovalStore):
         now = datetime.now(timezone.utc)
         pool = self._pool_or_raise()
         async with pool.acquire() as conn:
-            await conn.execute(
-                """INSERT INTO approval_gates
-                       (id, description, approver_email, context, status, token,
-                        created_at, submitter_email)
-                   VALUES ($1, $2, $3, $4::jsonb, 'pending', $5, $6, $7)""",
-                gate_id,
-                description,
-                approver_email,
-                json.dumps(context) if context is not None else None,
-                token,
-                now,
-                submitter_email,
-            )
+            async with conn.transaction():
+                await conn.execute(
+                    """INSERT INTO approval_gates
+                           (id, description, approver_email, context, status, token,
+                            created_at, submitter_email)
+                       VALUES ($1, $2, $3, $4::jsonb, 'pending', $5, $6, $7)""",
+                    gate_id,
+                    description,
+                    approver_email,
+                    json.dumps(context) if context is not None else None,
+                    token,
+                    now,
+                    submitter_email,
+                )
+                await self._append_audit(
+                    conn, "gate", gate_id, "created",
+                    {"description": description, "approver_email": approver_email,
+                     "submitter_email": submitter_email},
+                )
         return ApprovalGate(
             id=gate_id,
             description=description,
@@ -194,12 +297,17 @@ class PostgresStore(ApprovalStore):
         now = datetime.now(timezone.utc)
         pool = self._pool_or_raise()
         async with pool.acquire() as conn:
-            await conn.execute(
-                """UPDATE approval_gates
-                   SET status=$1, decided_at=$2, decided_by=$3, comment=$4
-                   WHERE id=$5""",
-                decision, now, decided_by, comment, gate_id,
-            )
+            async with conn.transaction():
+                await conn.execute(
+                    """UPDATE approval_gates
+                       SET status=$1, decided_at=$2, decided_by=$3, comment=$4
+                       WHERE id=$5""",
+                    decision, now, decided_by, comment, gate_id,
+                )
+                await self._append_audit(
+                    conn, "gate", gate_id, decision,
+                    {"comment": comment}, actor=decided_by,
+                )
         gate.status = decision
         gate.decided_at = _iso(now)
         gate.decided_by = decided_by
@@ -263,12 +371,17 @@ class PostgresWorkflowStore(PostgresStore, WorkflowStore):
         now = datetime.now(timezone.utc)
         pool = self._pool_or_raise()
         async with pool.acquire() as conn:
-            await conn.execute(
-                """INSERT INTO workflow_instances
-                       (id, workflow_name, form_data, status, created_at, submitter_email)
-                   VALUES ($1, $2, $3::jsonb, 'running', $4, $5)""",
-                inst_id, workflow_name, json.dumps(form_data), now, submitter_email,
-            )
+            async with conn.transaction():
+                await conn.execute(
+                    """INSERT INTO workflow_instances
+                           (id, workflow_name, form_data, status, created_at, submitter_email)
+                       VALUES ($1, $2, $3::jsonb, 'running', $4, $5)""",
+                    inst_id, workflow_name, json.dumps(form_data), now, submitter_email,
+                )
+                await self._append_audit(
+                    conn, "instance", inst_id, "created",
+                    {"workflow_name": workflow_name, "submitter_email": submitter_email},
+                )
         return WorkflowInstance(
             id=inst_id,
             workflow_name=workflow_name,
@@ -296,12 +409,17 @@ class PostgresWorkflowStore(PostgresStore, WorkflowStore):
         pool = self._pool_or_raise()
         now = datetime.now(timezone.utc) if status in ("completed", "rejected", "error") else None
         async with pool.acquire() as conn:
-            await conn.execute(
-                """UPDATE workflow_instances
-                   SET status=$1, current_step=$2, completed_at=$3
-                   WHERE id=$4""",
-                status, current_step, now, instance_id,
-            )
+            async with conn.transaction():
+                await conn.execute(
+                    """UPDATE workflow_instances
+                       SET status=$1, current_step=$2, completed_at=$3
+                       WHERE id=$4""",
+                    status, current_step, now, instance_id,
+                )
+                await self._append_audit(
+                    conn, "instance", instance_id, "status_changed",
+                    {"status": status, "current_step": current_step},
+                )
 
     # ── Workflow steps ─────────────────────────────────────────────────────────
 
@@ -319,17 +437,23 @@ class PostgresWorkflowStore(PostgresStore, WorkflowStore):
         now = datetime.now(timezone.utc)
         pool = self._pool_or_raise()
         async with pool.acquire() as conn:
-            await conn.execute(
-                """INSERT INTO workflow_steps
-                       (id, instance_id, step_name, step_type, status, token,
-                        approver_email, parent_step_id, metadata, created_at)
-                   VALUES ($1, $2, $3, $4, 'pending', $5, $6, $7, $8::jsonb, $9)""",
-                step_id, instance_id, step_name, step_type, token,
-                approver_email,
-                parent_step_id,
-                json.dumps(metadata) if metadata is not None else None,
-                now,
-            )
+            async with conn.transaction():
+                await conn.execute(
+                    """INSERT INTO workflow_steps
+                           (id, instance_id, step_name, step_type, status, token,
+                            approver_email, parent_step_id, metadata, created_at)
+                       VALUES ($1, $2, $3, $4, 'pending', $5, $6, $7, $8::jsonb, $9)""",
+                    step_id, instance_id, step_name, step_type, token,
+                    approver_email,
+                    parent_step_id,
+                    json.dumps(metadata) if metadata is not None else None,
+                    now,
+                )
+                await self._append_audit(
+                    conn, "step", step_id, "created",
+                    {"instance_id": instance_id, "step_name": step_name, "step_type": step_type,
+                     "approver_email": approver_email, "parent_step_id": parent_step_id},
+                )
         return WorkflowStepRecord(
             id=step_id,
             instance_id=instance_id,
@@ -369,12 +493,17 @@ class PostgresWorkflowStore(PostgresStore, WorkflowStore):
         now = datetime.now(timezone.utc)
         pool = self._pool_or_raise()
         async with pool.acquire() as conn:
-            await conn.execute(
-                """UPDATE workflow_steps
-                   SET status=$1, decided_at=$2, decided_by=$3, comment=$4
-                   WHERE id=$5""",
-                decision, now, decided_by, comment, step_id,
-            )
+            async with conn.transaction():
+                await conn.execute(
+                    """UPDATE workflow_steps
+                       SET status=$1, decided_at=$2, decided_by=$3, comment=$4
+                       WHERE id=$5""",
+                    decision, now, decided_by, comment, step_id,
+                )
+                await self._append_audit(
+                    conn, "step", step_id, decision,
+                    {"comment": comment}, actor=decided_by,
+                )
         step.status = decision
         step.decided_at = _iso(now)
         step.decided_by = decided_by

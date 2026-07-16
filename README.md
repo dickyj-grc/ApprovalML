@@ -1,6 +1,17 @@
 # ApprovalML
 
-YAML-based approval workflow parser and validator.
+Multi-party approval workflows for AI agent tool calls. Define maker-checker chains in YAML, get a tamper-evident record of every decision.
+
+**ApprovalML** is a headless approval workflow engine for AI agents. When an agent calls a tool that moves money, touches production, or grants access, a single "approve" click isn't a control — it's a formality. ApprovalML lets you declare real authorization chains in YAML — serial (supervisor → finance → director), parallel (any-one, majority, all), conditional on the call's payload — and wraps any MCP server so guarded tool calls pend until the chain completes. Every decision is identity-bound and written to a hash-chained, tamper-evident audit trail: not just *that* the call was approved, but *who* authorized it, and in what order.
+
+No LLM in the enforcement path. AI proposes the action; the approval chain is deterministic YAML, executed exactly as written. Humans are named in `.env`, workflows are portable, and the whole thing runs from the command line with docker compose — no UI required.
+
+- **Multi-party chains, not single gates** — serial steps, parallel strategies (all / any-one / majority), conditional routing on tool-call data
+- **MCP-native** — proxy any MCP server; guarded tools pend, approvers decide via email/Slack/webhook, the agent polls and resumes
+- **Tamper-evident audit trail** — every action (creation, decision, auto-skip) is hash-chained with actor identity and timestamp — see [Audit Trail](#audit-trail)
+- **Deterministic runtime** — the YAML is compiled policy; no model decides who approves what
+- **Roles via environment** — `approver: finance_manager` resolves through `APPROVALML_ROLE_FINANCE_MANAGER` in `.env`, so workflow templates are shareable without a company directory
+- **Headless by design** — CLI + `approvalml validate`, config in git, alerts to the tools you already have
 
 > **New to ApprovalML?** Use [`PROMPT.md`](./PROMPT.md) with any AI assistant to generate workflows from plain English — no need to learn the syntax first.
 
@@ -174,6 +185,35 @@ Alice's agent submits with `alice@example.com` as the submitter. `list_pending_a
 | `SMTP_USER` | _(empty)_ | SMTP username |
 | `SMTP_PASSWORD` | _(empty)_ | SMTP password |
 | `EMAIL_FROM` | `approvalml@localhost` | Sender address |
+| `APPROVALML_ROLE_<NAME>` | _(empty)_ | Comma-separated approver emails for role `<NAME>` in workflow YAML — see [Approver Roles](#approver-roles) |
+
+### Approver Roles
+
+A bare role name in `approver:` (e.g. `approver: finance_manager`) or in the `approvers:` list form (e.g. `- role: finance_manager`) resolves through an environment variable: `APPROVALML_ROLE_FINANCE_MANAGER=alice@example.com,bob@example.com`. The name is uppercased and non-alphanumeric characters become underscores (`finance manager` → `APPROVALML_ROLE_FINANCE_MANAGER`); the value is a comma-separated list of approver emails.
+
+This is a static, opt-in substitute for Aptiwise's organization-based role resolution — no org hierarchy, no per-department scoping, just a fixed name-to-emails mapping. A role with no matching environment variable raises a clear validation error rather than silently creating a step with zero approvers.
+
+### Audit Trail
+
+Every approval action — gate/instance/step creation, decisions, and parallel-step auto-skips — is written to a single `audit_log` table as a SHA-256 hash-chained entry, not just the plain `decided_by`/`decided_at` fields already on each row.
+
+The chain is **global**, not scoped per gate or instance: each entry's `prev_hash` is the hash of whatever entry was written immediately before it, across the whole deployment. Tampering with any row — anywhere, from any point in the deployment's history — breaks verification for every entry after it.
+
+Verify the chain:
+
+```bash
+approvalml verify-audit --db-url postgresql://approvalml:approvalml@localhost:5432/approvalml
+```
+
+Or over HTTP:
+
+```bash
+curl -H "Authorization: Bearer $APPROVALML_API_TOKEN" \
+  http://localhost:8765/services/v1/audit/verify
+
+curl -H "Authorization: Bearer $APPROVALML_API_TOKEN" \
+  http://localhost:8765/services/v1/approvals/<gate-or-instance-id>/audit-log
+```
 
 ---
 
@@ -198,9 +238,9 @@ workflow, summary = parse_approvalml(yaml_text)
 ## Example Workflow
 
 > [!NOTE]
-> In the open-source standalone runtime, role-based assignments (e.g., `role: manager`) and requestor-based hierarchy resolution (e.g., `${requestor.manager}`) are not supported because the open-source server is serverless and runs without a SaaS company directory database. 
-> 
-> For open-source deployment, assign step approvers using direct email strings (e.g., `approver: manager@example.com`) or resolve them dynamically using a form field email template (e.g., `approver: "${form.manager_email}"`).
+> The open-source standalone runtime has no company directory, so requestor-based hierarchy resolution (e.g., `${requestor.manager}`) isn't supported.
+>
+> Assign step approvers using direct email strings (e.g., `approver: manager@example.com`), a form field email template (e.g., `approver: "${form.manager_email}"`), or a role name (e.g., `approver: finance_manager`) resolved via `APPROVALML_ROLE_FINANCE_MANAGER=email1,email2` in your environment — see [Approver Roles](#approver-roles) below.
 
 ```yaml
 name: "Leave Request"

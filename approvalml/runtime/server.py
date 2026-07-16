@@ -18,6 +18,8 @@ API surface:
   POST /services/v1/workflows               — register a workflow YAML by name (admin)
   POST /services/v1/approvals/              — submit a named workflow instance
   GET  /services/v1/approvals/{id}/workflow — get workflow instance status
+  GET  /services/v1/approvals/{id}/audit-log — audit entries for one entity
+  GET  /services/v1/audit/verify            — verify the global hash chain (admin)
   POST /services/v1/tokens                  — create a user token (admin only)
   GET  /services/v1/tokens                  — list user tokens (admin only)
   DELETE /services/v1/tokens/{token}        — revoke a user token (admin only)
@@ -207,6 +209,54 @@ async def get_workflow_status(instance_id: str, request: Request) -> dict[str, A
     if result is None:
         raise HTTPException(status_code=404, detail="Workflow instance not found")
     return result
+
+
+# ── Audit trail ────────────────────────────────────────────────────────────────
+
+@app.get("/services/v1/approvals/{entity_id}/audit-log")
+async def get_audit_log(entity_id: str, request: Request) -> dict[str, Any]:
+    """
+    Return the audit entries for one gate/instance/step, in insertion order.
+
+    This is a filtered view for display — the underlying chain is global
+    (see runtime/postgres_store.py), so a given entry's prev_hash may point
+    to a row belonging to a different entity. Use
+    GET /services/v1/audit/verify to check the chain's integrity as a whole.
+    """
+    await _resolve_auth(request.headers.get("authorization"))
+    engine = _get_engine()
+    pool = engine.store._pool_or_raise()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT * FROM audit_log WHERE entity_id = $1 ORDER BY id ASC", entity_id
+        )
+    entries = [dict(r) for r in rows]
+    for entry in entries:
+        if isinstance(entry.get("event_data"), str):
+            import json as _json
+            entry["event_data"] = _json.loads(entry["event_data"] or "{}")
+    return {"entity_id": entity_id, "entries": entries}
+
+
+@app.get("/services/v1/audit/verify")
+async def verify_audit_chain(request: Request) -> dict[str, Any]:
+    """
+    Verify the SHA-256 hash chain integrity for the entire audit_log table.
+
+    Admin only — this reveals the full system-wide action history, not just
+    one entity's entries.
+    """
+    from ..audit_hash import verify_chain
+    from .postgres_store import _AUDIT_FIELD_NAMES
+
+    auth = await _resolve_auth(request.headers.get("authorization"))
+    _require_admin(auth)
+    engine = _get_engine()
+    pool = engine.store._pool_or_raise()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("SELECT * FROM audit_log ORDER BY id ASC")
+    is_valid, messages = verify_chain([dict(r) for r in rows], _AUDIT_FIELD_NAMES)
+    return {"entry_count": len(rows), "chain_valid": is_valid, "messages": messages}
 
 
 # ── Token management (admin only) ─────────────────────────────────────────────

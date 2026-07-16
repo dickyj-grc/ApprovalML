@@ -7,6 +7,7 @@ Usage:
     approvalml info <file>
     approvalml mcp-server [--api-url URL] [--api-token TOKEN] [--config PATH]
     approvalml serve [--port PORT] [--db-url URL] [--server-url URL]
+    approvalml verify-audit [--db-url URL]
 """
 
 import sys
@@ -89,6 +90,48 @@ def cmd_serve(args):
     return 0
 
 
+def cmd_verify_audit(args):
+    """Verify the global hash chain in the standalone runtime's audit_log table."""
+    import asyncio
+    import os
+
+    try:
+        import asyncpg
+    except ImportError:
+        print(
+            "Runtime server dependencies not installed.\n"
+            "Run: pip install 'approvalml[serve]'",
+            file=sys.stderr,
+        )
+        return 1
+
+    from approvalml.audit_hash import verify_chain
+    from approvalml.runtime.postgres_store import _AUDIT_FIELD_NAMES
+
+    db_url = args.db_url or os.environ.get(
+        "DATABASE_URL", "postgresql://approvalml:approvalml@localhost:5432/approvalml"
+    )
+
+    async def _run():
+        conn = await asyncpg.connect(db_url)
+        try:
+            rows = [dict(r) for r in await conn.fetch("SELECT * FROM audit_log ORDER BY id ASC")]
+        finally:
+            await conn.close()
+        return verify_chain(rows, _AUDIT_FIELD_NAMES), len(rows)
+
+    (is_valid, messages), entry_count = asyncio.run(_run())
+
+    print(f"Entries checked: {entry_count}")
+    if is_valid:
+        print("✓ Chain valid")
+        return 0
+    print("✗ Chain broken", file=sys.stderr)
+    for m in messages:
+        print(f"  • {m}", file=sys.stderr)
+    return 1
+
+
 def cmd_mcp_server(args):
     """Start the ApprovalML MCP server."""
     try:
@@ -136,6 +179,13 @@ def main():
     p_serve.add_argument("--api-token", default=None, help="Bearer token for MCP client auth (env: APPROVALML_API_TOKEN)")
     p_serve.add_argument("--workflows-dir", default=None, help="Directory of *.yaml files to load on startup (env: WORKFLOWS_DIR)")
     p_serve.set_defaults(func=cmd_serve)
+
+    # verify-audit command
+    p_verify_audit = subparsers.add_parser(
+        "verify-audit", help="Verify the standalone runtime's global audit hash chain"
+    )
+    p_verify_audit.add_argument("--db-url", default=None, help="PostgreSQL DSN (env: DATABASE_URL)")
+    p_verify_audit.set_defaults(func=cmd_verify_audit)
 
     # mcp-server command
     p_mcp = subparsers.add_parser("mcp-server", help="Start the ApprovalML MCP server")
