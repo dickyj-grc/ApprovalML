@@ -132,6 +132,24 @@ def cmd_verify_audit(args):
     return 1
 
 
+def cmd_wrap(upstream_command: str, upstream_args: list):
+    """Spawn upstream_command as a stdio MCP server and re-expose a gated version of it."""
+    import asyncio
+
+    from approvalml.mcp_wrap import run_wrapped_stdio
+
+    try:
+        asyncio.run(run_wrapped_stdio(upstream_command, upstream_args))
+    except ImportError:
+        print(
+            "MCP wrap dependencies not installed.\n"
+            "Run: pip install 'approvalml[mcp]'",
+            file=sys.stderr,
+        )
+        return 1
+    return 0
+
+
 def cmd_mcp_server(args):
     """Start the ApprovalML MCP server."""
     try:
@@ -154,6 +172,17 @@ def cmd_mcp_server(args):
 
 
 def main():
+    # `approvalml -- <upstream-command> <upstream-args...>` wraps a single
+    # stdio MCP server directly — bypass the normal subcommand parsing since
+    # everything after `--` belongs to the upstream command, not to us.
+    if "--" in sys.argv[1:]:
+        idx = sys.argv.index("--", 1)
+        upstream = sys.argv[idx + 1:]
+        if not upstream:
+            print("Usage: approvalml -- <upstream-command> [args...]", file=sys.stderr)
+            sys.exit(1)
+        sys.exit(cmd_wrap(upstream[0], upstream[1:]))
+
     parser = argparse.ArgumentParser(
         description="ApprovalML workflow validator and MCP server",
         formatter_class=argparse.RawDescriptionHelpFormatter,

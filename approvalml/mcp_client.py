@@ -85,3 +85,13 @@ class ApprovalMLClient:
             )
             resp.raise_for_status()
             return resp.json()
+
+    def get_workflow_status(self, instance_id: str) -> dict[str, Any]:
+        """Return full status of a workflow instance, including all steps."""
+        with httpx.Client(timeout=self.timeout) as client:
+            resp = client.get(
+                f"{self.base_url}/services/v1/approvals/{instance_id}/workflow",
+                headers=self._headers(),
+            )
+            resp.raise_for_status()
+            return resp.json()

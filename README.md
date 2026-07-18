@@ -71,6 +71,46 @@ Add to `~/.claude/claude_desktop_config.json`:
 
 The MCP server is stateless — it calls the runtime REST API. It works with the [standalone runtime](#standalone-runtime) below or with a hosted ApprovalML instance.
 
+## Wrap Any MCP Server
+
+Gate an existing MCP server — one you didn't write, running as a local stdio subprocess (e.g. `npx -y @modelcontextprotocol/server-github`) — without touching its code. `approvalml` spawns it, classifies its tools, and re-exposes a gated version over its own stdio:
+
+```json
+{
+  "mcpServers": {
+    "github-guarded": {
+      "command": "uvx",
+      "args": ["approvalml", "--", "npx", "-y", "@modelcontextprotocol/server-github"],
+      "env": {
+        "APPROVALML_APPROVER": "you@personal.com",
+        "APPROVALML_NOTIFY": "slack:https://hooks.slack.com/services/XXX"
+      }
+    }
+  }
+}
+```
+
+Each wrapped server gets its own `mcpServers` entry, exactly like today — no shared config file, no migration of your existing setup.
+
+**Zero-config classification** (no YAML needed): each tool is classified `auto` (forwarded directly) or `gate` (pends for approval) using two independent signals that must agree for `auto` — MCP tool annotations (`readOnlyHint`/`destructiveHint`) and a name-prefix heuristic (`get_*`/`list_*`/`search_*`/`read_*`/`describe_*` = safe; `create_*`/`update_*`/`delete_*`/`merge_*`/`write_*`/`send_*`/`execute_*` = sensitive). Disagreement or a missing signal defaults to `gate` — ambiguity pends, it never silently passes.
+
+- `APPROVALML_APPROVER` — the approver email used for every gated call.
+- `APPROVALML_NOTIFY=<channel>:<target>` — deliver the approval request via `slack`/`teams`/`lark`/`google_chat`, in addition to email. The target is a plain incoming-webhook URL — no bot token needed.
+
+**YAML escalation** (optional): set `APPROVALML_CONFIG` to a flat classification file to route specific tools through conditional_split/serial-approval-chain workflows instead of a single gate:
+
+```yaml
+rules:
+  - match: "get_*"
+    action: auto
+  - match: "merge_pull_request"
+    action: workflow
+    workflow: github_merge_guard   # a full named workflow — see Example Workflow below
+default_action: gate               # applied when no rule matches
+```
+
+Because the wrapper hands the tool call's arguments straight into `form_data`, the referenced workflow only ever needs `decision`/`parallel_approval`/`conditional_split`/`notification`/`end` — the same step types supported identically by both this standalone runtime and Aptiwise SaaS. Upgrading later is just repointing `APPROVALML_API_URL`/`APPROVALML_API_TOKEN` at a hosted instance; the classification config and workflow YAML stay unchanged. Approver roles (`approver: finance_manager`) resolve via `APPROVALML_ROLE_FINANCE_MANAGER` in this mode too — see [Approver Roles](#approver-roles).
+
 ---
 
 ## Standalone Runtime
