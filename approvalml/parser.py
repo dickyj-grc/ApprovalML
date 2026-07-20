@@ -4,7 +4,7 @@ ApprovalML YAML Parser with comprehensive validation and schema support.
 
 import re
 from enum import Enum
-from typing import Any, Optional, Union
+from typing import Any, Literal, Optional, Union
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, ValidationInfo, field_validator, model_validator
@@ -1160,6 +1160,19 @@ class TriggerConfig(BaseModel):
         return self
 
 
+class GuardsConfig(BaseModel):
+    """MCP tool-classification config for approvalml's stdio wrapper (see mcp_wrap.py).
+
+    'tools' maps an fnmatch glob against an upstream MCP tool name to an action:
+    - auto: forwarded directly, no approval step
+    - gate: single-step approval gate
+    - deny: never exposed to the calling agent
+    A tool name matching no pattern falls through to this file's own workflow:
+    section (submitted under this file's own 'name') if present, else 'gate'.
+    """
+    tools: dict[str, Literal["auto", "gate", "deny"]]
+
+
 class ApprovalProcess(BaseModel):
     """Main ApprovalML workflow schema"""
     name: str
@@ -1208,6 +1221,11 @@ class ApprovalProcess(BaseModel):
     # e.g. view_all_roles: ["finance", "admin", "hr"]
     # Leave empty or omit to use default access (requestor + approvers + org managers only).
     view_all_roles: Optional[list[str]] = None
+
+    # MCP tool-classification rules for approvalml's stdio wrapper (mcp_wrap.py).
+    # Lets one workflow file double as the classifier for a wrapped MCP server —
+    # tools not matched by guards.tools escalate into this file's own workflow.
+    guards: Optional[GuardsConfig] = None
 
     @model_validator(mode='before')
     @classmethod

@@ -82,7 +82,7 @@ settings:
    - ❌ **DO NOT** use deprecated type: `approval`
 
 4. ✅ **Key Order:** Always output top-level keys in this exact canonical order:
-   `name → description → version → type → triggers → submission_criteria → view_all_roles → form → workflow → settings`
+   `name → description → version → type → triggers → submission_criteria → view_all_roles → form → workflow → settings → guards`
    - Any additional top-level keys not in this list should appear after `settings`
    - ❌ **DO NOT** place `form` or `workflow` before `name`/`description`
 
@@ -2892,6 +2892,60 @@ fields:
     value_align: center
     print_only: true       # visible in PDF only — hidden in the submission/approval form
 ```
+
+## MCP Tool Guards (Optional)
+
+`guards` is only used by approvalml's stdio MCP wrapper (`approvalml -- <upstream-command>`), which spawns an existing MCP server as a subprocess and re-exposes a gated version of its tools. It lets ONE workflow file act as both the tool classifier for that server AND the escalation workflow — no separate classification file needed.
+
+```yaml
+name: "GitHub MCP Guard"
+
+guards:
+  tools:
+    "get_*": auto      # forwarded directly, no approval step
+    "list_*": auto
+    "search_*": auto
+    # any tool name not matched here falls through to this file's own
+    # workflow: below, submitted under this file's own name: ("GitHub MCP Guard")
+
+form:
+  fields:
+    - name: tool_name       # always present — the upstream tool name being called
+      type: text
+      label: "Tool"
+      readonly: true
+    - name: target_branch
+      type: text
+      label: "Target Branch"
+      readonly: true
+      calculated: true
+      jsonata: "$exists(arguments.base) ? arguments.base : null"   # 'arguments' holds the raw tool-call arguments
+
+workflow:
+  route:
+    name: route
+    type: conditional_split
+    choices:
+      - conditions: "tool_name == 'merge_pull_request'"
+        continue_to: reviewer_approval
+    default:
+      continue_to: done
+  reviewer_approval:
+    name: reviewer_approval
+    type: decision
+    approver: "reviewer"
+    on_approve: { continue_to: "done" }
+    on_reject: { end_workflow: true }
+  done:
+    name: done
+    type: end
+```
+
+**Rules:**
+- `guards.tools` is a map of glob pattern (fnmatch syntax, e.g. `"get_*"`) to one of `auto` | `gate` | `deny` — never `workflow`, since falling through to this file's own `workflow:` section already is the escalation path.
+- Every field in `form` is available to the workflow; `tool_name` is injected automatically, and `arguments` (the tool call's raw arguments, as a nested object) is available to `jsonata` calculated fields — reference nested values as `arguments.<name>`.
+- `guards` has no effect on a workflow submitted normally through the UI/API — it is only consulted by the MCP wrapper's classifier.
+- This is a shorthand alternative to a flat `rules:`/`default_action:` classification file (see the `approvalml` README) — use `rules:` instead when you need per-tool routing to *different* named workflows from one classification file.
 
 This syntax reference should enable AI engines to generate valid ApprovalML workflows from natural language descriptions while ensuring proper validation against available employee roles.
 """

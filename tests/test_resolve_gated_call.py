@@ -61,14 +61,14 @@ async def test_recall_forwards_once_gate_approved():
 # @lat: [[open-source#Open-Source: ApprovalML Package#MCP Wrap (Per-Server Stdio Gateway)#Gate and workflow dispatch]]
 @pytest.mark.asyncio
 async def test_first_call_submits_workflow_with_merged_form_data():
-    """Workflow action merges tool_name and arguments directly into form_data — no JSONata needed."""
+    """Workflow action merges tool_name and the raw tool arguments (nested under 'arguments') into form_data."""
     client = _client()
     await resolve_gated_call(
         client, "workflow", "github_merge_guard", "merge_pull_request",
         {"base": "main"}, "a@example.com",
     )
     client.submit_workflow.assert_called_once_with(
-        "github_merge_guard", {"tool_name": "merge_pull_request", "base": "main"}
+        "github_merge_guard", {"tool_name": "merge_pull_request", "arguments": {"base": "main"}}
     )
 
 
