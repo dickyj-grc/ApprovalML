@@ -1618,6 +1618,16 @@ fetch_new_records:
         value: 500
 ```
 
+**Typed placeholders in a data source's `url_template`/`body_template` — `{{param:type}}`:**
+- A `{{param}}` placeholder substitutes as a plain string by default.
+- Append `:type` to preserve a different type when the substituted value is embedded into JSON: `:integer`, `:number`, `:boolean`, `:json`, `:file`.
+- **Always use `:json` for any param whose value is an array or object** — e.g. a list of IDs. Without it, an array-shaped value that arrives as a string (e.g. `"[1,2]"`) stays a literal string instead of becoming a real JSON array, which downstream systems (ERPs like Odoo in particular) will reject with a confusing low-level error instead of a clear one.
+
+```yaml
+# On the data source itself (not the params: list above):
+body_template: '{"ids": {{ids:json}}, "fields": ["name", "amount"]}'
+```
+
 **Diff Result Format:**
 - If no changes: `"None"` (string, for use in conditional_split)
 - If changes detected: Descriptive string with markdown emphasis for highlighting in approval UI:
