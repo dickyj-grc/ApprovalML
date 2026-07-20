@@ -17,7 +17,7 @@ dependencies = [
 
 [project.optional-dependencies]
 mcp = [
-    "mcp>=1.0",
+    "mcp>=1.28.1",
 ]
 serve = [
     "fastapi>=0.100",
