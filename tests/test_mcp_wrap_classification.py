@@ -4,7 +4,7 @@ Unit tests for tool classification in the per-server MCP wrapper (mcp_wrap.py).
 Pure logic, no DB, no subprocess — mirrors the offline style of test_runtime.py.
 """
 
-from approvalml.mcp_wrap import classify_tool, classify_tool_zero_config
+from approvalml.mcp_wrap import classify_tool, classify_tool_zero_config, _normalize_guards_config
 
 # @lat: [[open-source#Open-Source: ApprovalML Package#MCP Wrap (Per-Server Stdio Gateway)#Zero-config classification]]
 def test_zero_config_agreement_passes_read_only():
@@ -67,3 +67,39 @@ def test_classify_tool_no_config_uses_zero_config_heuristic():
     """With no config at all, classification falls back entirely to the zero-config heuristic."""
     assert classify_tool({"name": "get_status"}, None) == ("auto", None)
     assert classify_tool({"name": "delete_file"}, None) == ("gate", None)
+
+
+# @lat: [[open-source#Open-Source: ApprovalML Package#MCP Wrap (Per-Server Stdio Gateway)#Guards config (single-file classifier + workflow)]]
+def test_normalize_guards_config_maps_tools_to_rules():
+    """guards.tools entries become synthetic rules, first-match-wins like rules:."""
+    raw = {
+        "name": "GitHub MCP Guard",
+        "guards": {"tools": {"get_*": "auto", "list_*": "auto"}},
+        "workflow": {"done": {"name": "done", "type": "end"}},
+    }
+    normalized = _normalize_guards_config(raw)
+    assert classify_tool({"name": "get_status"}, normalized) == ("auto", None)
+    assert classify_tool({"name": "list_files"}, normalized) == ("auto", None)
+
+
+# @lat: [[open-source#Open-Source: ApprovalML Package#MCP Wrap (Per-Server Stdio Gateway)#Guards config (single-file classifier + workflow)]]
+def test_normalize_guards_config_falls_through_to_own_workflow():
+    """A tool matching no guards.tools pattern escalates into the file's own workflow, by its own name."""
+    raw = {
+        "name": "GitHub MCP Guard",
+        "guards": {"tools": {"get_*": "auto"}},
+        "workflow": {"done": {"name": "done", "type": "end"}},
+    }
+    normalized = _normalize_guards_config(raw)
+    assert classify_tool({"name": "merge_pull_request"}, normalized) == ("workflow", "GitHub MCP Guard")
+
+
+# @lat: [[open-source#Open-Source: ApprovalML Package#MCP Wrap (Per-Server Stdio Gateway)#Guards config (single-file classifier + workflow)]]
+def test_normalize_guards_config_no_workflow_falls_back_to_default_action():
+    """A guards-only file with no workflow: section falls back to default_action/gate, not 'workflow'."""
+    raw = {
+        "name": "Read-Only Guard",
+        "guards": {"tools": {"get_*": "auto"}},
+    }
+    normalized = _normalize_guards_config(raw)
+    assert classify_tool({"name": "delete_repo"}, normalized) == ("gate", None)

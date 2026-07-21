@@ -97,7 +97,50 @@ Each wrapped server gets its own `mcpServers` entry, exactly like today — no s
 - `APPROVALML_APPROVER` — the approver email used for every gated call.
 - `APPROVALML_NOTIFY=<channel>:<target>` — deliver the approval request via `slack`/`teams`/`lark`/`google_chat`, in addition to email. The target is a plain incoming-webhook URL — no bot token needed.
 
-**YAML escalation** (optional): set `APPROVALML_CONFIG` to a flat classification file to route specific tools through conditional_split/serial-approval-chain workflows instead of a single gate:
+**YAML escalation** (optional): set `APPROVALML_CONFIG` to a classification file to route specific tools through conditional_split/serial-approval-chain workflows instead of a single gate. Two shapes are supported:
+
+**`guards:`** — one file is both the classifier *and* the escalation workflow for the whole server (recommended for a single wrapped server):
+
+```yaml
+name: "GitHub MCP Guard"
+
+guards:
+  tools:
+    "get_*": auto       # forwarded directly, no approval step
+    "list_*": auto
+    "search_*": auto
+    # everything else falls through to this file's own workflow: below
+
+form:
+  fields:
+    - name: tool_name
+      type: text
+      label: "Tool"
+      readonly: true
+
+workflow:
+  route:
+    name: route
+    type: conditional_split
+    choices:
+      - conditions: "tool_name == 'merge_pull_request'"
+        continue_to: reviewer_approval
+    default:
+      continue_to: done
+  reviewer_approval:
+    name: reviewer_approval
+    type: decision
+    approver: "reviewer"
+    on_approve: { continue_to: "done" }
+    on_reject: { end_workflow: true }
+  done:
+    name: done
+    type: end
+```
+
+See a full worked example at [`examples/mcp-guards/github-merge-guard.yaml`](examples/mcp-guards/github-merge-guard.yaml).
+
+**`rules:`** — a flat classification file that routes individual tools to separately named workflows (use this when different tools need different, independently-maintained workflows):
 
 ```yaml
 rules:
@@ -105,11 +148,11 @@ rules:
     action: auto
   - match: "merge_pull_request"
     action: workflow
-    workflow: github_merge_guard   # a full named workflow — see Example Workflow below
+    workflow: github_merge_guard   # a separately named, separately loaded workflow file
 default_action: gate               # applied when no rule matches
 ```
 
-Because the wrapper hands the tool call's arguments straight into `form_data`, the referenced workflow only ever needs `decision`/`parallel_approval`/`conditional_split`/`notification`/`end` — the same step types supported identically by both this standalone runtime and Aptiwise SaaS. Upgrading later is just repointing `APPROVALML_API_URL`/`APPROVALML_API_TOKEN` at a hosted instance; the classification config and workflow YAML stay unchanged. Approver roles (`approver: finance_manager`) resolve via `APPROVALML_ROLE_FINANCE_MANAGER` in this mode too — see [Approver Roles](#approver-roles).
+Because the wrapper hands the tool call's arguments straight into `form_data` (as `{tool_name, arguments}` — `arguments` is the tool call's raw argument object, addressable in `jsonata` as `arguments.<name>`), the referenced workflow only ever needs `decision`/`parallel_approval`/`conditional_split`/`notification`/`end` — the same step types supported identically by both this standalone runtime and Aptiwise SaaS. Upgrading later is just repointing `APPROVALML_API_URL`/`APPROVALML_API_TOKEN` at a hosted instance; the classification config and workflow YAML stay unchanged. Approver roles (`approver: finance_manager`) resolve via `APPROVALML_ROLE_FINANCE_MANAGER` in this mode too — see [Approver Roles](#approver-roles).
 
 ---
 
@@ -368,6 +411,7 @@ Browse ready-to-use workflow templates in the [`examples/`](./examples) folder:
 | IT | [Equipment Request](examples/it/equipment-request.yaml) |
 | Procurement | [Vendor Purchase Order](examples/procurement/vendor-purchase-order.yaml) |
 | Procurement | [Purchase Order with Signature](examples/procurement/purchase-order-with-signature.yaml) |
+| MCP Guards | [GitHub Merge Guard](examples/mcp-guards/github-merge-guard.yaml) |
 
 ## Running Tests
 

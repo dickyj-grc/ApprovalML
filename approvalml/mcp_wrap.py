@@ -12,7 +12,11 @@ Every tool from the upstream server is classified as one of:
   deny     - never exposed
 
 Classification source, in priority order:
-  1. APPROVALML_CONFIG (flat rules:/default_action YAML) if set
+  1. APPROVALML_CONFIG YAML if set — either shape:
+     a. guards.tools: a glob->action map, doubling as the escalation workflow
+        (tools not matched fall through to this same file's own workflow:,
+        submitted under this file's own name:)
+     b. flat rules:/default_action list, escalating to a separately named workflow
   2. Built-in zero-config heuristic (annotations + tool-name prefixes)
 
 Environment variables:
@@ -92,10 +96,32 @@ def classify_tool_zero_config(tool: dict[str, Any]) -> str:
 
 # ── Classification config (APPROVALML_CONFIG) ───────────────────────────────
 
+def _normalize_guards_config(raw: dict[str, Any]) -> dict[str, Any]:
+    """
+    Normalize a guards.tools document into the internal rules:/default_action:
+    shape, so classify_tool() only ever has to handle one format.
+
+    Unmatched tools escalate into this same file's own workflow: section
+    (submitted under this file's own name:) when one is present, else fall
+    back to the file's default_action (or 'gate').
+    """
+    tools = raw["guards"]["tools"]
+    rules = [{"match": pattern, "action": action} for pattern, action in tools.items()]
+    if "workflow" in raw:
+        return {"rules": rules, "default_action": "workflow", "default_workflow": raw.get("name")}
+    return {"rules": rules, "default_action": raw.get("default_action", "gate")}
+
+
 def load_classification_config(path: str) -> dict[str, Any]:
-    """Load a flat rules:/default_action classification document."""
+    """
+    Load a classification document — either the guards.tools shape (see
+    _normalize_guards_config) or the flat rules:/default_action shape.
+    """
     with open(path) as f:
-        return yaml.safe_load(f) or {}
+        raw = yaml.safe_load(f) or {}
+    if "guards" in raw:
+        return _normalize_guards_config(raw)
+    return raw
 
 
 def classify_tool(tool: dict[str, Any], config: Optional[dict[str, Any]]) -> tuple[str, Optional[str]]:
@@ -112,7 +138,7 @@ def classify_tool(tool: dict[str, Any], config: Optional[dict[str, Any]]) -> tup
         for rule in config.get("rules", []):
             if fnmatch.fnmatch(name, rule["match"]):
                 return rule["action"], rule.get("workflow")
-        return config.get("default_action", "gate"), None
+        return config.get("default_action", "gate"), config.get("default_workflow")
     return classify_tool_zero_config(tool), None
 
 
@@ -185,7 +211,7 @@ async def resolve_gated_call(
 
     if instance_id is None:
         if action == "workflow":
-            result = client.submit_workflow(workflow_name, {"tool_name": tool_name, **arguments})
+            result = client.submit_workflow(workflow_name, {"tool_name": tool_name, "arguments": arguments})
         else:
             result = client.request_approval(
                 description=f"AI agent wants to call `{tool_name}`",
