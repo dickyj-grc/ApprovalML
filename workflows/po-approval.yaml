@@ -1,0 +1,116 @@
+name: "Pengajuan PO Approval Workflow"
+description: "Workflow persetujuan pengajuan Purchase Order dengan lampiran dan detail item"
+submission_criteria:
+  company_roles: ["Purchasing"]
+form:
+  fields:
+    - name: "form_submission_date"
+      type: "date"
+      label: "Tanggal Form Pengajuan PO"
+      required: true
+    - name: "po_number"
+      type: "text"
+      label: "No PO"
+      required: true
+      placeholder: "Contoh: PO/ABC/2023/001"
+    - name: "supplier_name"
+      type: "text"
+      label: "Supplier Name"
+      required: true
+    - name: "warehouse_name"
+      type: "text"
+      label: "Nama Gudang"
+      required: true
+    - name: "main_po_attachment"
+      type: "file_upload"
+      label: "Lampiran PO Utama"
+      required: true
+      accept: ".pdf,.xlsx,.doc,.docx,.jpg,.jpeg,.png"
+    - name: "po_items"
+      type: "line_items"
+      label: "Detail Item PO"
+      min_items: 1
+      max_items: 50
+      item_fields:
+        - name: "item_no"
+          type: "number"
+          label: "Nomer"
+          readonly: true
+          calculated: true
+          formula: "row_index + 1"
+        - name: "item_name"
+          type: "text"
+          label: "Item Name"
+          required: true
+        - name: "stock_quantity"
+          type: "number"
+          label: "Stock"
+          required: true
+          validation:
+            min: 0
+        - name: "order_quantity"
+          type: "number"
+          label: "Buka PO"
+          required: true
+          validation:
+            min: 1
+        - name: "unit_price"
+          type: "currency"
+          label: "Harga Satuan"
+          required: true
+          currency: "IDR"
+          validation:
+            min: 0.01
+        - name: "total_price"
+          type: "currency"
+          label: "Harga Total"
+          readonly: true
+          calculated: true
+          currency: "IDR"
+          formula: "order_quantity * unit_price"
+    - name: "excel_data_paste_area"
+      type: "textarea"
+      label: "Salin Data Tabel dari Excel (Opsional)"
+      required: false
+      placeholder: "Tempel data tabel dari Excel di sini jika diperlukan..."
+    - name: "total_purchase_amount"
+      type: "currency"
+      label: "Total Pembelian"
+      required: true
+      currency: "IDR"
+      readonly: true
+      calculated: true
+      formula: "sum(po_items.total_price)"
+workflow:
+  direktur_approval:
+    name: "Persetujuan Direktur"
+    type: "decision"
+    approver: "Direktur"
+    on_approve:
+      continue_to: "komisaris_approval"
+    on_reject:
+      end_workflow: true
+      notify_requestor: "Pengajuan PO Anda ditolak oleh Direktur."
+  komisaris_approval:
+    name: "Persetujuan Komisaris"
+    type: "decision"
+    approver: "Komisaris"
+    on_approve:
+      continue_to: "po_finalization"
+    on_reject:
+      end_workflow: true
+      notify_requestor: "Pengajuan PO Anda ditolak oleh Komisaris."
+
+  po_finalization:
+    name: "Penyelesaian PO"
+    type: "end"
+    description: "PO telah disetujui, siap untuk diproses."
+    notify_requestor: "Pengajuan PO Anda telah disetujui dan sedang diproses."
+    
+settings:
+  timeout:
+    direktur_approval: "72_hours"
+    komisaris_approval: "96_hours"
+  notifications:
+    send_reminders: true
+    reminder_intervals: ["24_hours", "48_hours"]

@@ -1,0 +1,102 @@
+# docs/examples/expense-approval-new-format.yaml
+name: "Expense Reimbursement (New Format)"
+description: "Employee expense reimbursement approval workflow using new conditional_split format"
+type: "expense_approval"
+
+form:
+  fields:
+    - name: "expense_type"
+      type: "select"
+      label: "Expense Type"
+      required: true
+      options:
+        - value: "travel"
+          label: "Travel & Transportation"
+        - value: "meals"
+          label: "Meals & Entertainment"
+        - value: "office"
+          label: "Office Supplies"
+        - value: "training"
+          label: "Training & Education"
+        - value: "other"
+          label: "Other Business Expense"
+
+    - name: "total_amount"
+      type: "currency"
+      label: "Total Amount"
+      required: true
+      validation:
+        min: 0.01
+        max: 10000
+
+    - name: "expense_date"
+      type: "date"
+      label: "Expense Date"
+      required: true
+
+    - name: "description"
+      type: "textarea"
+      label: "Description"
+      required: true
+
+    - name: "receipts"
+      type: "file_upload"
+      label: "Receipts"
+      required: true
+      accept: ".pdf,.jpg,.png"
+      multiple: true
+
+workflow:
+  # Step 1: Manager Approval
+  manager_approval:
+    name: "manager_approval"
+    type: "decision"
+    description: "Manager Review"
+    approver: "${requestor.manager}"
+    on_approve:
+      continue_to: "amount_check"
+    on_reject:
+      notify_requestor: "Expense report denied by manager"
+      end_workflow: true
+
+  # Step 2: Amount-based routing using NEW FORMAT
+  amount_check:
+    name: "amount_check"
+    type: "conditional_split"
+    description: "Amount-based Routing"
+    choices:
+      - conditions: "total_amount > 500"
+        continue_to: "finance_approval"
+    default:
+      continue_to: "processing"
+
+  # Step 3a: Finance Team Approval (for high-value expenses)
+  finance_approval:
+    name: "finance_approval"
+    type: "decision"
+    description: "Finance Team Approval"
+    approver: "finance_head"
+    on_approve:
+      continue_to: "processing"
+    on_reject:
+      notify_requestor: "High-value expense denied by finance"
+      end_workflow: true
+
+  # Step 4: Processing & Reimbursement
+  # - update_accounting_system: true
+  # - schedule_reimbursement: true
+  processing:
+    name: "processing"
+    type: "end"
+    description: "Expense Processing & Reimbursement"
+    notify_requestor: "Expense approved and scheduled for reimbursement"
+
+
+settings:
+  timeout:
+    manager_approval: "72_hours"
+    finance_approval: "48_hours"
+
+  compliance:
+    receipt_required: true
+    policy_check: true

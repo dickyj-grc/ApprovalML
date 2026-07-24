@@ -1,0 +1,263 @@
+name: "AI-Powered Invoice Processing"
+description: "Extract invoice data using Claude AI and route for approval"
+execution_type: approval
+tags: ["finance", "ai", "invoice", "ocr"]
+
+form:
+  fields:
+    - name: invoice_file
+      type: file_upload
+      label: "Upload Invoice"
+      required: true
+      accept: "image/*,application/pdf"
+      description: "Upload scanned invoice or PDF"
+
+    - name: vendor_name
+      type: text
+      label: "Vendor Name (optional)"
+      required: false
+      placeholder: "Leave blank for AI extraction"
+
+    - name: submitter_notes
+      type: textarea
+      label: "Additional Notes"
+      required: false
+      placeholder: "Any special instructions..."
+
+workflow:
+  # Step 1: Extract invoice data with Claude Vision
+  extract_invoice_data:
+    name: "AI Invoice Data Extraction"
+    type: automatic
+    api:
+      connector: "Claude AI"
+      action: "analyze_image"
+      parameters:
+        model: "claude-3-5-sonnet-20241022"
+        max_tokens: 2048
+        image_base64: "${form.invoice_file_base64}"
+        prompt: |
+          Extract all invoice information and return JSON:
+
+          {
+            "invoice_number": "string",
+            "invoice_date": "YYYY-MM-DD",
+            "due_date": "YYYY-MM-DD",
+            "vendor_name": "string",
+            "vendor_address": "string",
+            "vendor_tax_id": "string",
+            "subtotal": number,
+            "tax_amount": number,
+            "total_amount": number,
+            "currency": "USD",
+            "payment_terms": "string",
+            "line_items": [
+              {
+                "description": "string",
+                "quantity": number,
+                "unit_price": number,
+                "amount": number
+              }
+            ],
+            "confidence": "high|medium|low",
+            "notes": "any issues or unclear items"
+          }
+
+          Return ONLY valid JSON.
+      timeout: 90
+      save_to: invoice_data
+    on_complete:
+      continue_to: validate_invoice_data
+    on_failure:
+      continue_to: manual_entry_required
+
+  # Step 2: Validate extracted data
+  validate_invoice_data:
+    name: "Validate Invoice Data"
+    type: decision
+    condition: "${invoice_data.invoice_number} != null AND ${invoice_data.total_amount} > 0"
+    on_true:
+      continue_to: check_amount_threshold
+    on_false:
+      continue_to: manual_entry_required
+
+  # Step 3: Route based on amount
+  check_amount_threshold:
+    name: "Check Amount Threshold"
+    type: decision
+    condition: "${invoice_data.total_amount} > 10000"
+    on_true:
+      continue_to: cfo_approval_required
+    on_false:
+      continue_to: manager_approval
+
+  # Step 4a: High-value invoice - CFO approval
+  cfo_approval_required:
+    name: "CFO Approval Required"
+    type: decision
+    approver: "cfo"
+    notification:
+      message:
+        subject: "High-Value Invoice Approval - ${invoice_data.vendor_name}"
+        body: |
+          A high-value invoice requires your approval.
+
+          **Invoice Details:**
+          - Invoice Number: ${invoice_data.invoice_number}
+          - Vendor: ${invoice_data.vendor_name}
+          - Date: ${invoice_data.invoice_date}
+          - Due Date: ${invoice_data.due_date}
+          - Amount: ${invoice_data.currency} ${invoice_data.total_amount}
+
+          **Line Items:**
+          ${invoice_data.line_items}
+
+          **Payment Terms:** ${invoice_data.payment_terms}
+
+          **AI Confidence:** ${invoice_data.confidence}
+          **Notes:** ${invoice_data.notes}
+
+          **Submitter Notes:** ${form.submitter_notes}
+
+          Please review and approve or reject.
+    on_approve:
+      continue_to: create_payment_record
+    on_reject:
+      continue_to: notify_rejection
+
+  # Step 4b: Standard amount - Manager approval
+  manager_approval:
+    name: "Manager Approval"
+    type: decision
+    approver: "finance_manager"
+    notification:
+      message:
+        subject: "Invoice Approval - ${invoice_data.vendor_name}"
+        body: |
+          Please review and approve this invoice.
+
+          **Invoice Number:** ${invoice_data.invoice_number}
+          **Vendor:** ${invoice_data.vendor_name}
+          **Amount:** ${invoice_data.currency} ${invoice_data.total_amount}
+          **Due Date:** ${invoice_data.due_date}
+
+          **AI Confidence:** ${invoice_data.confidence}
+
+          View details in the approval dashboard.
+    on_approve:
+      continue_to: create_payment_record
+    on_reject:
+      continue_to: notify_rejection
+
+  # Step 5: Create payment record in ERP
+  create_payment_record:
+    name: "Create Payment in ERP"
+    type: automatic
+    api:
+      connector: "ERP System"
+      action: "create_payable"
+      parameters:
+        invoice_number: "${invoice_data.invoice_number}"
+        vendor_name: "${invoice_data.vendor_name}"
+        vendor_tax_id: "${invoice_data.vendor_tax_id}"
+        invoice_date: "${invoice_data.invoice_date}"
+        due_date: "${invoice_data.due_date}"
+        amount: "${invoice_data.total_amount}"
+        currency: "${invoice_data.currency}"
+        line_items: "${invoice_data.line_items}"
+        payment_terms: "${invoice_data.payment_terms}"
+        workflow_instance_id: "${instance.id}"
+      timeout: 30
+      save_to: erp_response
+    on_complete:
+      continue_to: notify_completion
+    on_failure:
+      continue_to: erp_integration_failed
+
+  # Step 6: Success notification
+  notify_completion:
+    name: "Notify Completion"
+    type: notification
+    recipients:
+      - email: "${instance.requester_email}"
+      - role: "finance_team"
+    notification:
+      message:
+        subject: "✅ Invoice Processed - ${invoice_data.invoice_number}"
+        body: |
+          Your invoice has been successfully processed and approved.
+
+          **Invoice:** ${invoice_data.invoice_number}
+          **Vendor:** ${invoice_data.vendor_name}
+          **Amount:** ${invoice_data.currency} ${invoice_data.total_amount}
+          **Payment ID:** ${erp_response.payment_id}
+
+          Payment will be processed according to terms: ${invoice_data.payment_terms}
+    on_complete:
+      continue_to: complete
+
+  # Error Handling Paths
+
+  manual_entry_required:
+    name: "Manual Data Entry Required"
+    type: decision
+    approver: "accounts_payable"
+    notification:
+      message:
+        subject: "Manual Invoice Entry Required"
+        body: |
+          AI extraction failed or had low confidence. Manual entry required.
+
+          **Reason:** ${invoice_data.notes}
+
+          **AI Confidence:** ${invoice_data.confidence}
+
+          Please review the invoice and enter data manually.
+
+          **Submitter Notes:** ${form.submitter_notes}
+    on_approve:
+      continue_to: manager_approval
+    on_reject:
+      continue_to: notify_rejection
+
+  erp_integration_failed:
+    name: "ERP Integration Failed"
+    type: notification
+    recipients:
+      - role: "it_support"
+      - role: "finance_manager"
+    notification:
+      message:
+        subject: "⚠️ ERP Integration Error - ${invoice_data.invoice_number}"
+        body: |
+          Failed to create payment record in ERP system.
+
+          **Invoice:** ${invoice_data.invoice_number}
+          **Vendor:** ${invoice_data.vendor_name}
+          **Amount:** ${invoice_data.currency} ${invoice_data.total_amount}
+
+          Please create the payment record manually.
+    on_complete:
+      continue_to: notify_rejection
+
+  notify_rejection:
+    name: "Notify Rejection"
+    type: notification
+    recipients:
+      - email: "${instance.requester_email}"
+    notification:
+      message:
+        subject: "Invoice Rejected - ${invoice_data.invoice_number}"
+        body: |
+          Your invoice submission has been rejected.
+
+          **Invoice:** ${invoice_data.invoice_number}
+          **Vendor:** ${invoice_data.vendor_name}
+
+          Please contact the finance team for more information.
+    on_complete:
+      continue_to: complete
+
+  complete:
+    name: "Complete"
+    type: end

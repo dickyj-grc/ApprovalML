@@ -1,0 +1,402 @@
+name: "AI-Powered Pre-Screening Interview"
+description: "Automated candidate screening with AI scoring - Ultra Simple Version"
+execution_type: workflow
+tags: ["hr", "recruitment", "ai", "screening"]
+
+form:
+  fields:
+    - name: candidate_name
+      type: text
+      label: "Full Name"
+      required: true
+
+    - name: candidate_email
+      type: email
+      label: "Email Address"
+      required: true
+
+    - name: candidate_phone
+      type: text
+      label: "Phone Number"
+      required: true
+
+    - name: position_applied
+      type: select
+      label: "Position Applied For"
+      required: true
+      options:
+        - value: "senior_backend_engineer"
+          label: "Senior Backend Engineer"
+        - value: "frontend_developer"
+          label: "Frontend Developer"
+        - value: "devops_engineer"
+          label: "DevOps Engineer"
+
+    - name: years_of_experience
+      type: number
+      label: "Years of Professional Experience"
+      required: true
+      validation:
+        min_value: 0
+        max_value: 50
+
+    - name: technical_skills
+      type: textarea
+      label: "What are your primary technical skills?"
+      required: true
+      validation:
+        min_length: 50
+
+    - name: previous_projects
+      type: textarea
+      label: "Describe a significant project you've worked on"
+      required: true
+      validation:
+        min_length: 100
+
+    - name: problem_solving_scenario
+      type: textarea
+      label: "How would you debug a production issue?"
+      required: true
+      validation:
+        min_length: 150
+
+    - name: team_collaboration
+      type: textarea
+      label: "Describe working with a difficult team member"
+      required: true
+      validation:
+        min_length: 100
+
+    - name: salary_expectation
+      type: currency
+      label: "Expected Annual Salary (USD)"
+      required: true
+
+workflow:
+  # Step 1: Check minimum experience
+  check_minimum_experience:
+    name: "Check Minimum Experience"
+    type: decision
+    condition: "${form.years_of_experience} >= 3"
+    on_true:
+      continue_to: ai_score_responses
+    on_false:
+      continue_to: reject_insufficient_experience
+
+  # Step 2: AI scoring (no extraction needed!)
+  ai_score_responses:
+    name: "AI Analysis & Scoring"
+    type: automatic
+    api:
+      connector: "Claude AI"
+      action: "chat"
+      parameters:
+        model: "claude-3-5-sonnet-20241022"
+        max_tokens: 2048
+        temperature: 0.3
+        prompt: |
+          Analyze candidate for ${form.position_applied}:
+
+          Experience: ${form.years_of_experience} years
+          Skills: ${form.technical_skills}
+          Project: ${form.previous_projects}
+          Problem Solving: ${form.problem_solving_scenario}
+          Team Work: ${form.team_collaboration}
+
+          Return JSON:
+          {
+            "overall_score": 85,
+            "technical_score": 90,
+            "recommendation": "excellent",
+            "strengths": ["Strong technical depth", "Clear communication"],
+            "concerns": ["Limited team leadership experience"],
+            "interview_questions": ["Tell me about scaling challenges"]
+          }
+      timeout: 90
+      save_to: ai_score  # Save entire response, no extraction!
+    on_complete:
+      continue_to: route_by_recommendation
+    on_failure:
+      continue_to: manual_review
+
+  # Step 3: Route by AI recommendation (use dot notation!)
+  route_by_recommendation:
+    name: "Route by AI Score"
+    type: decision
+    condition: "${ai_score.recommendation} == 'excellent' OR ${ai_score.recommendation} == 'good'"
+    on_true:
+      continue_to: check_salary
+    on_false:
+      continue_to: check_borderline
+
+  # Step 4: Check borderline
+  check_borderline:
+    name: "Check if Borderline"
+    type: decision
+    condition: "${ai_score.recommendation} == 'borderline'"
+    on_true:
+      continue_to: manager_review
+    on_false:
+      continue_to: reject_low_score
+
+  # Step 5: Check salary (simple comparison!)
+  check_salary:
+    name: "Check Salary Alignment"
+    type: decision
+    condition: "${form.salary_expectation} <= 180000"
+    on_true:
+      continue_to: schedule_interview
+    on_false:
+      continue_to: manager_review_salary
+
+  # Step 6: Schedule interview
+  schedule_interview:
+    name: "Schedule Interview"
+    type: automatic
+    api:
+      connector: "Calendly"
+      action: "create_link"
+      parameters:
+        event_type: "technical_interview"
+      timeout: 30
+      save_to: interview  # No extraction - just save!
+    on_complete:
+      continue_to: send_invitation
+    on_failure:
+      continue_to: manual_schedule
+
+  # Step 7: Send invitation (access nested values with dots!)
+  send_invitation:
+    name: "Send Interview Invitation"
+    type: notification
+    recipients:
+      - email: "${form.candidate_email}"
+    notification:
+      message:
+        subject: "🎉 Technical Interview - ${form.position_applied}"
+        body: |
+          Dear ${form.candidate_name},
+
+          Congratulations! We'd like to invite you for a technical interview.
+
+          Your Assessment:
+          - Overall Score: ${ai_score.overall_score}/100
+          - Technical: ${ai_score.technical_score}/100
+
+          Strengths: ${ai_score.strengths}
+
+          Schedule here: ${interview.booking_url}
+
+          Topics to discuss:
+          ${ai_score.interview_questions}
+
+          Looking forward to it!
+    on_complete:
+      continue_to: notify_team
+
+  # Step 8: Manager review
+  manager_review:
+    name: "Manager Review"
+    type: decision
+    approver: "hiring_manager"
+    notification:
+      message:
+        subject: "Review Needed: ${form.candidate_name}"
+        body: |
+          Candidate: ${form.candidate_name}
+          Position: ${form.position_applied}
+          Experience: ${form.years_of_experience} years
+
+          AI Assessment:
+          - Score: ${ai_score.overall_score}/100
+          - Recommendation: ${ai_score.recommendation}
+
+          Strengths: ${ai_score.strengths}
+          Concerns: ${ai_score.concerns}
+
+          Approve to proceed with interview.
+    on_approve:
+      continue_to: schedule_interview
+    on_reject:
+      continue_to: reject_after_review
+
+  # Salary review
+  manager_review_salary:
+    name: "Salary Review"
+    type: decision
+    approver: "hiring_manager"
+    notification:
+      message:
+        subject: "Salary Review: ${form.candidate_name}"
+        body: |
+          Strong candidate, high salary expectation.
+
+          Expected: $${form.salary_expectation}
+          Budget: $120k - $180k
+          AI Score: ${ai_score.overall_score}/100
+
+          Approve if willing to negotiate.
+    on_approve:
+      continue_to: schedule_interview
+    on_reject:
+      continue_to: reject_salary
+
+  # Manual review
+  manual_review:
+    name: "Manual Review"
+    type: decision
+    approver: "senior_recruiter"
+    notification:
+      message:
+        subject: "Manual Review: ${form.candidate_name}"
+        body: |
+          AI failed. Please review manually.
+
+          Candidate: ${form.candidate_name}
+          Position: ${form.position_applied}
+    on_approve:
+      continue_to: schedule_interview
+    on_reject:
+      continue_to: reject_after_review
+
+  # Notify team
+  notify_team:
+    name: "Notify Team"
+    type: notification
+    recipients:
+      - role: "recruiter"
+    notification:
+      message:
+        subject: "✅ Interview Scheduled - ${form.candidate_name}"
+        body: |
+          Candidate: ${form.candidate_name}
+          Score: ${ai_score.overall_score}/100
+          Focus: ${ai_score.interview_questions}
+    on_complete:
+      continue_to: log_ats
+
+  # Manual scheduling
+  manual_schedule:
+    name: "Manual Schedule"
+    type: notification
+    recipients:
+      - role: "recruiter"
+    notification:
+      message:
+        subject: "Manual Schedule: ${form.candidate_name}"
+        body: |
+          Auto-schedule failed.
+
+          Candidate: ${form.candidate_name}
+          Email: ${form.candidate_email}
+          Score: ${ai_score.overall_score}/100
+    on_complete:
+      continue_to: log_ats
+
+  # Rejections
+  reject_insufficient_experience:
+    name: "Reject: Experience"
+    type: notification
+    recipients:
+      - email: "${form.candidate_email}"
+    notification:
+      message:
+        subject: "Application Update"
+        body: |
+          Dear ${form.candidate_name},
+
+          This position requires minimum 3 years experience.
+
+          Please apply for roles matching your experience level.
+    on_complete:
+      continue_to: log_ats
+
+  reject_low_score:
+    name: "Reject: Skills"
+    type: notification
+    recipients:
+      - email: "${form.candidate_email}"
+    notification:
+      message:
+        subject: "Application Update"
+        body: |
+          Dear ${form.candidate_name},
+
+          Thank you for your interest. We're moving forward with candidates
+          whose experience more closely aligns with our requirements.
+
+          We wish you success in your job search.
+    on_complete:
+      continue_to: log_ats
+
+  reject_after_review:
+    name: "Reject: After Review"
+    type: notification
+    recipients:
+      - email: "${form.candidate_email}"
+    notification:
+      message:
+        subject: "Application Update"
+        body: |
+          Dear ${form.candidate_name},
+
+          After review, we've decided to move forward with other candidates.
+
+          Thank you for your interest.
+    on_complete:
+      continue_to: log_ats
+
+  reject_salary:
+    name: "Reject: Salary"
+    type: notification
+    recipients:
+      - email: "${form.candidate_email}"
+    notification:
+      message:
+        subject: "Application Update"
+        body: |
+          Dear ${form.candidate_name},
+
+          Salary expectations don't align with our current budget.
+
+          Please consider future opportunities.
+    on_complete:
+      continue_to: log_ats
+
+  # Log to ATS
+  log_ats:
+    name: "Log to ATS"
+    type: automatic
+    api:
+      connector: "ATS System"
+      action: "create_candidate"
+      parameters:
+        name: "${form.candidate_name}"
+        email: "${form.candidate_email}"
+        position: "${form.position_applied}"
+        score: "${ai_score.overall_score}"
+        status: "${ai_score.recommendation}"
+      timeout: 30
+      save_to: ats_record
+    on_complete:
+      continue_to: complete
+    on_failure:
+      continue_to: complete  # Don't block
+
+  complete:
+    name: "Complete"
+    type: end
+
+# Reserved variable keywords (cannot be used in save_to):
+# - form: Access form fields (e.g., ${form.candidate_name})
+# - instance: Workflow instance metadata (e.g., ${instance.id})
+# - user: Current user (e.g., ${user.email})
+#
+# All other names are allowed:
+# - ai_score, interview, ats_record, etc.
+#
+# Access nested values with dot notation:
+# - ${ai_score.overall_score}
+# - ${interview.booking_url}
+# - ${ats_record.candidate_id}

@@ -1,0 +1,42 @@
+name: "Simple GitHub Merge Guard"
+description: "A simplified guard for GitHub PR merges requiring a single approval"
+version: "1.0"
+
+guards:
+  tools:
+    "get_*": auto
+    "list_*": auto
+    "search_*": auto
+    # Anything else (like merge_pull_request) requires approval
+
+form:
+  fields:
+    - name: "request_summary"
+      type: "label"
+      default_value: "GitHub Merge Request needs approval"
+
+    - name: "tool_name"
+      type: "text"
+      label: "Tool"
+      readonly: true
+
+workflow:
+  # A simple single-step approval process
+  reviewer_approval:
+    name: "Reviewer Approval"
+    type: "decision"
+    description: "Approval from the lead engineer before merging"
+    approver: "reviewer"  # Maps to APPROVALML_ROLE_REVIEWER in .env
+    recipients:
+      - channel: telegram
+        to: "156631790"
+    on_approve:
+      continue_to: "done"
+    on_reject:
+      notify_requestor: "Merge denied by reviewer"
+      end_workflow: true
+
+  done:
+    name: "done"
+    type: "end"
+    notify_requestor: "Merge approved — the agent will now execute the merge"
