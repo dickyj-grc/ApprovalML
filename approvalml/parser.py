@@ -1356,6 +1356,35 @@ class ApprovalProcess(BaseModel):
         return self
 
 
+class WorkflowSafeLoader(yaml.SafeLoader):
+    """PyYAML SafeLoader restricted to YAML 1.2 core-schema boolean keywords.
+
+    PyYAML implements the YAML 1.1 spec, whose bool resolver also matches
+    yes/no/on/off/y/n (case-insensitive) — so an unquoted form field label
+    like `label: yes` silently becomes the Python bool True instead of the
+    string "yes". Workflow YAML is authored in Workflow Studio using the
+    `yaml` npm package (js-yaml v4's default schema), which already follows
+    YAML 1.2 and only treats true/false as booleans. Narrowing this loader
+    to match keeps backend parsing consistent with what authors see in Studio.
+    """
+
+
+WorkflowSafeLoader.yaml_implicit_resolvers = {
+    key: [pair for pair in resolvers if pair[0] != 'tag:yaml.org,2002:bool']
+    for key, resolvers in yaml.SafeLoader.yaml_implicit_resolvers.items()
+}
+WorkflowSafeLoader.add_implicit_resolver(
+    'tag:yaml.org,2002:bool',
+    re.compile(r'^(?:true|True|TRUE|false|False|FALSE)$'),
+    list('tTfF'),
+)
+
+
+def safe_load_workflow_yaml(yaml_content: str) -> Any:
+    """Parse ApprovalML workflow YAML with YAML 1.2 boolean semantics (see WorkflowSafeLoader)."""
+    return yaml.load(yaml_content, Loader=WorkflowSafeLoader)
+
+
 class ApprovalMLParser:
     """Main parser class for ApprovalML YAML files"""
 
@@ -1367,7 +1396,7 @@ class ApprovalMLParser:
         """Parse YAML content and validate against schema"""
         try:
             # Parse YAML
-            data = yaml.safe_load(yaml_content)
+            data = safe_load_workflow_yaml(yaml_content)
 
             if not isinstance(data, dict):
                 raise ValueError("YAML must contain a dictionary at root level")
