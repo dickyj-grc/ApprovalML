@@ -32,6 +32,14 @@ submission_criteria:
 # Leave empty (or omit) to use default participant-scoped access (requestor + approvers + managers)
 view_all_roles: []  # e.g. ["finance", "admin", "hr"]
 
+# Optional public submission — lets an unauthenticated stranger submit this workflow's entry
+# point. Bypasses submission_criteria entirely. See "public_submission" section below.
+# public_submission:
+#   enabled: true
+#   verification:
+#     method: email          # "email" | "human" | "none"
+#     field: contact_email   # required in all three modes
+
 # Form definition
 form:
   # Optional page-repeating header zone (field names referenced from fields[])
@@ -207,7 +215,15 @@ When a workflow is cron-triggered, the form fields receive their values from aut
 - `text` - Single line text input
 - `label` - Static text display (no input, for headings or instructions)
 - `textarea` - Multi-line text input
-- `email` - Email validation with validation
+- `email` - Email validation with validation. Supports `validation.check_mx` (bool — free MX-record lookup) and `validation.deliverability_provider` (e.g. `abstract_api`, `kickbox` — paid mailbox verification) for stronger checks, most relevant on `public_submission` forms:
+  ```yaml
+  - name: contact_email
+    type: email
+    required: true
+    validation:
+      check_mx: true
+      deliverability_provider: abstract_api
+  ```
 - `number` - Numeric input with validation
 - `currency` - Money amount with formatting
 - `date` - Date picker
@@ -225,6 +241,8 @@ When a workflow is cron-triggered, the form fields receive their values from aut
 - `autocomplete` - Search-as-you-type field with data source integration
 - `autonumber` - Auto-incrementing sequential number (e.g. EXP-00042). Read-only; generated at submission. Supports `prefix` and `pad_length`.
 - `json` - Structured JSON data field with interactive tree view and syntax highlighting support.
+- `honeypot` - Invisible anti-bot trap field, `public_submission` forms only (see Advanced Field Types below).
+- `turnstile` - Cloudflare Turnstile CAPTCHA widget, `public_submission` forms only (see Advanced Field Types below).
 
 ### Additional Field Display Properties
 ```yaml
@@ -625,6 +643,26 @@ This stores only the `id` value from the selected object.
   - `min_length`: Minimum characters before search (default: 3)
   - `debounce_ms`: Delay before search executes (default: 300)
   - `max_results`: Maximum results to display (default: 50)
+
+#### Honeypot Field (Anti-Bot Trap)
+
+Used on `public_submission` forms only. Renders invisibly (real users never see or fill it); bots and scripts often do, or submit implausibly fast.
+
+```yaml
+- name: website_url
+  type: honeypot
+  min_fill_seconds: 3   # optional, default 3 — reject if submitted faster than this after the form rendered
+```
+
+#### Turnstile Field (Cloudflare CAPTCHA)
+
+Used on `public_submission` forms only. Renders the Cloudflare Turnstile widget; the submitted value is a verification token, checked server-side via Cloudflare's `siteverify` API before the submission proceeds.
+
+```yaml
+- name: captcha
+  type: turnstile
+  required: true
+```
 
 ## Form Layout (Optional)
 
@@ -2582,6 +2620,38 @@ submission_criteria:
 # view_all_roles omitted — managers see subordinates via org hierarchy naturally
 ```
 
+### `public_submission` — Anonymous, No-Login Entry (Staged for Review)
+
+Lets an unauthenticated stranger submit this workflow's entry point from a public URL — no login, no personal API token. `submission_criteria` is ignored/bypassed entirely when `public_submission.enabled: true`, since an anonymous submitter has no `org_path`/company roles to evaluate against.
+
+Submissions are never created as a real `employees`/instance row directly from the public request — they're staged first, and one of three `verification.method` values decides what promotes a staged row into a real workflow instance:
+
+```yaml
+public_submission:
+  enabled: true
+  verification:
+    method: email          # "email" | "human" | "none"
+    field: contact_email   # required in all three modes — the form field (type: email) that becomes employees.email
+    # approver: hr_admin   # required only when method: human
+  rate_limit:
+    max_requests: 5
+    period_seconds: 3600
+```
+
+- **`method: email`** — the address in `field` receives a verification link; clicking it is what creates the real employee record and starts the workflow. Proves inbox ownership, not legitimacy. No email is sent to anyone else.
+- **`method: human`** — `field` is still required (it's what becomes the eventual employee's email), but nothing is auto-emailed to the submitter. Instead the resolved `approver` receives a review link and explicitly approves or rejects the staged submission. Use this when a person, not an inbox click, should decide legitimacy.
+- **`method: none`** — no staging at all; the real employee and workflow instance are created immediately once the request passes the anti-spam form fields (`honeypot`, `turnstile`) and `field`'s deliverability validation. Fastest, but appropriate only when those checks are trusted to be sufficient on their own.
+
+**When to use `public_submission`:**
+- External parties with no company account need to submit a request (vendors, applicants, guests, patients)
+- You want a single workflow to handle both the intake form and the internal approval chain that follows
+
+**When to omit it (default: not present):**
+- Only known, authenticated employees should ever submit this workflow
+- The workflow needs `submission_criteria`-based role/org-path eligibility targeting
+
+See "Advanced Field Types" for the `honeypot` and `turnstile` field types used on `public_submission` forms, and "Field Properties" for the `check_mx`/`deliverability_provider` validation rule on `email` fields.
+
 ## Validation Rules for AI Generation
 
 When generating ApprovalML YAML, ensure:
@@ -2969,7 +3039,20 @@ CROSS_FIELD_VALIDATION = ["required_unless", "empty_when"]
 FIELD_TYPES = {
     "text": {"validation": ["min_length", "max_length", "pattern"]},
     "textarea": {"validation": ["min_length", "max_length", "rows"]},
-    "email": {"validation": ["required", "pattern"]},
+    "email": {"validation": ["required", "pattern", "check_mx", "deliverability_provider"]},
+    "honeypot": {
+        "validation": [],
+        "optional_props": ["min_fill_seconds"],
+        "description": "Invisible anti-bot trap field for public_submission forms. Real users never see or "
+                       "fill it; bots and scripts usually do, or submit implausibly fast. min_fill_seconds "
+                       "(default 3) rejects submissions faster than that after the form rendered."
+    },
+    "turnstile": {
+        "validation": ["required"],
+        "optional_props": ["site_key"],
+        "description": "Cloudflare Turnstile CAPTCHA widget for public_submission forms. The submitted value "
+                       "is the verification token, checked server-side via Cloudflare's siteverify API."
+    },
     "number": {"validation": ["min_value", "max_value", "step"]},
     "currency": {"validation": ["min", "max", "min_value", "max_value"], "optional_props": ["currency"]},
     "date": {"validation": ["min_date", "max_date"]},
