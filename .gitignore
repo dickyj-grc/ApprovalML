@@ -18,3 +18,6 @@ venv.bak/
 dist/
 build/
 *.egg-info/
+
+# Local runtime drop-in dir (docker-compose WORKFLOWS_DIR_HOST); use examples/ for committed samples
+workflows/
