@@ -2962,6 +2962,35 @@ print:
 | `suppress_section_header` | `false` | When `true`, all section title bars (dark heading rows) are hidden in the PDF — useful for clean invoice layouts |
 | `show_history` | `true` | When `false`, the Approval History / chronology table is not included in the PDF |
 
+**Theme overrides (`print.theme`):**
+
+The PDF's colors, fonts, spacing, and border styling come from a theme that merges (later wins): hardcoded platform defaults → company-level branding (`company.settings.pdf`) → this workflow's own `print.theme`. A workflow only needs to specify the keys it wants to override — everything else falls back through the merge chain.
+
+```yaml
+print:
+  theme:
+    fonts:
+      scale: 1.25            # multiplies EVERY rendered font-size (labels, values, tables,
+                              # signatures, section headers, etc.) — the simplest way to make
+                              # a dense document (e.g. a small-print invoice) more readable
+                              # when printed. Default: 1.0 (no change from platform defaults).
+      family: "Inter, Arial, sans-serif"  # base font family
+      size_base: "12px"       # body text / table base size (before scale is applied)
+      size_small: "10px"      # secondary/meta text
+      size_heading: "14px"    # section headings
+      size_title: "20px"      # top document title
+    colors:
+      primary: "#111827"      # main text color
+      accent: "#065f46"       # currency values, highlights
+    spacing:
+      page_margin: "8mm"
+    borders:
+      width: "1px"
+      radius: "4px"
+```
+
+`fonts.scale` is the recommended lever for "make the print/PDF text bigger or smaller" — it's a single multiplier applied uniformly across the whole document (labels, table cells, signatures, section header bars, everything), rather than needing to individually retune `size_base`/`size_heading`/etc. A workflow like an invoice with dense `line_items` tables might set `fonts.scale: 1.2`–`1.4` for better print legibility; a data-heavy form that needs to fit more on one page might use `0.85`.
+
 **Print-only fields:**
 
 Individual fields can be marked `print_only: true` to make them appear in the PDF but not in the web form. This is useful for centered document titles or print-specific annotations:
