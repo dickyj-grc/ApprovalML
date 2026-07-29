@@ -657,10 +657,13 @@ Used on `public_submission` forms only. Renders invisibly (real users never see 
 
 Used on `public_submission` forms only. Renders the Cloudflare Turnstile widget; the submitted value is a verification token, checked server-side via Cloudflare's `siteverify` API before the submission proceeds.
 
+Uses one platform-wide Cloudflare site (managed centrally, not per-company — Turnstile is free/unlimited, so there's no reason for each company to bring its own account) via the frontend's `NEXT_PUBLIC_TURNSTILE_SITE_KEY` build-time default. `site_key` is only needed on the field itself to override that default for a specific workflow:
+
 ```yaml
 - name: captcha
   type: turnstile
   required: true
+  # site_key: "0x4AAAAAAA..."  # optional — overrides the platform default for this field only
 ```
 
 ## Form Layout (Optional)
@@ -3051,7 +3054,9 @@ FIELD_TYPES = {
         "validation": ["required"],
         "optional_props": ["site_key"],
         "description": "Cloudflare Turnstile CAPTCHA widget for public_submission forms. The submitted value "
-                       "is the verification token, checked server-side via Cloudflare's siteverify API."
+                       "is the verification token, checked server-side via Cloudflare's siteverify API. "
+                       "Defaults to one platform-wide site (NEXT_PUBLIC_TURNSTILE_SITE_KEY, managed centrally, "
+                       "not per-company); 'site_key' overrides that default for this field only."
     },
     "number": {"validation": ["min_value", "max_value", "step"]},
     "currency": {"validation": ["min", "max", "min_value", "max_value"], "optional_props": ["currency"]},
