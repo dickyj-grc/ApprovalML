@@ -33,12 +33,11 @@ submission_criteria:
 view_all_roles: []  # e.g. ["finance", "admin", "hr"]
 
 # Optional public submission — lets an unauthenticated stranger submit this workflow's entry
-# point. Bypasses submission_criteria entirely. See "public_submission" section below.
+# point. This workflow IS the verification/intake process — bypasses submission_criteria
+# entirely. See "public_submission" section below.
 # public_submission:
 #   enabled: true
-#   verification:
-#     method: email          # "email" | "human" | "none"
-#     field: contact_email   # required in all three modes
+#   requestor_email: "automation@company.com"   # optional — owner of this workflow's own instances
 
 # Form definition
 form:
@@ -215,16 +214,15 @@ When a workflow is cron-triggered, the form fields receive their values from aut
 - `text` - Single line text input
 - `label` - Static text display (no input, for headings or instructions)
 - `textarea` - Multi-line text input
-- `email` - Email validation with validation. Supports `validation.check_mx` (bool — free MX-record lookup) and `validation.deliverability_provider` (name of a data connector configured in Connectors admin, e.g. ZeroBounce, Kickbox, NeverBounce, or Abstract API — NOT a hardcoded provider-type string; resolved and called the same way `autocomplete`/`data_source` fields already call connectors inline, outside the step engine) for stronger checks, most relevant on `public_submission` forms:
+- `email` - Email validation with validation. Supports `validation.check_mx` (bool — free, local MX-record lookup; no API call), most relevant on `public_submission` forms:
   ```yaml
   - name: contact_email
     type: email
     required: true
     validation:
       check_mx: true
-      deliverability_provider: "Abstract Email Verify"  # data connector name, company-scoped
   ```
-  The connector's own `field_mapping` is responsible for normalizing whatever shape the provider returns into a single `deliverable: true/false` field — the platform doesn't hardcode per-provider response parsing.
+  Paid mailbox-deliverability verification (ZeroBounce, Kickbox, NeverBounce, Abstract API, etc.) is a workflow step now, not a field-validation rule — see `public_submission`'s example workflow (an `automatic`/`api:` step, e.g. `check_deliverability`), since it costs money per call and should only run once per instance rather than on every field-level validation pass.
 - `number` - Numeric input with validation
 - `currency` - Money amount with formatting
 - `date` - Date picker
@@ -2621,27 +2619,28 @@ submission_criteria:
 # view_all_roles omitted — managers see subordinates via org hierarchy naturally
 ```
 
-### `public_submission` — Anonymous, No-Login Entry (Staged for Review)
+### `public_submission` — Anonymous, No-Login Entry (Verification-as-a-Workflow)
 
 Lets an unauthenticated stranger submit this workflow's entry point from a public URL — no login, no personal API token. `submission_criteria` is ignored/bypassed entirely when `public_submission.enabled: true`, since an anonymous submitter has no `org_path`/company roles to evaluate against.
 
-Submissions are never created as a real `employees`/instance row directly from the public request — they're staged first, and one of three `verification.method` values decides what promotes a staged row into a real workflow instance:
+A `public_submission`-enabled workflow **is** the verification/intake process — not a bespoke staging subsystem. It starts immediately (via `POST /workflows/public/{uuid}/submit`, after free pre-instance gates: honeypot, rate limit, Turnstile, `check_mx`) using an already-existing **internal** employee as requestor — never the anonymous submitter, and never a newly-created row. That requestor is resolved the same way triggers already resolve theirs:
 
 ```yaml
 public_submission:
   enabled: true
-  verification:
-    method: email          # "email" | "human" | "none"
-    field: contact_email   # required in all three modes — the form field (type: email) that becomes employees.email
-    # approver: hr_admin   # required only when method: human
+  requestor_email: "automation@company.com"      # optional — explicit "owner" of this workflow's own instances
+  # requestor_company_role: "workflow_admin"     # alternative to requestor_email
+  # falls back to workflow.created_by if both are omitted
   rate_limit:
     max_requests: 5
     period_seconds: 3600
 ```
 
-- **`method: email`** — the address in `field` receives a verification link; clicking it is what creates the real employee record and starts the workflow. Proves inbox ownership, not legitimacy. No email is sent to anyone else.
-- **`method: human`** — `field` is still required (it's what becomes the eventual employee's email), but nothing is auto-emailed to the submitter. Instead the resolved `approver` receives a review link and explicitly approves or rejects the staged submission. Use this when a person, not an inbox click, should decide legitimacy.
-- **`method: none`** — no staging at all; the real employee and workflow instance are created immediately once the request passes the anti-spam form fields (`honeypot`, `turnstile`) and `field`'s deliverability validation. Fastest, but appropriate only when those checks are trusted to be sufficient on their own.
+Everything else — deliverability checks, content-spam scoring, identity confirmation — is just ordinary workflow steps authored directly in `workflow:`, using primitives that already exist:
+- Paid deliverability/spam checks: `automatic`/`api:` steps calling a company-configured connector (Kickbox, ZeroBounce, OOPSpam, etc.), routed with `conditional_split`.
+- Identity confirmation: an ordinary `decision` step. A dynamic `approver: { email: "${form.contact_email}", ... }` gives self-service email-link confirmation (the existing dynamic-approver mechanism already auto-creates/reuses the external employee and sends the standard no-login public-token approval email — nothing new); a role-based `approver: hr_admin` gives human review instead. Omit the step entirely for no confirmation at all.
+- Promoting a verified submission into a real business-workflow instance, correctly attributed to the actual submitter: a `spawn` step with `requestor_from: <field_name>` (see the `spawn` step type) — the real request only comes into existence once identity/spam checks have passed.
+- Discarding a spam/rejected verification instance without cluttering dashboards: an `end` step with `archive: true` (see the `end` step type).
 
 **When to use `public_submission`:**
 - External parties with no company account need to submit a request (vendors, applicants, guests, patients)
@@ -2651,7 +2650,7 @@ public_submission:
 - Only known, authenticated employees should ever submit this workflow
 - The workflow needs `submission_criteria`-based role/org-path eligibility targeting
 
-See "Advanced Field Types" for the `honeypot` and `turnstile` field types used on `public_submission` forms, and "Field Properties" for the `check_mx`/`deliverability_provider` validation rule on `email` fields.
+See "Advanced Field Types" for the `honeypot` and `turnstile` field types used on `public_submission` forms, "Field Properties" for the `check_mx` validation rule on `email` fields, and the `spawn`/`end` step types below for `requestor_from`/`archive`.
 
 ## Validation Rules for AI Generation
 
@@ -3040,7 +3039,7 @@ CROSS_FIELD_VALIDATION = ["required_unless", "empty_when"]
 FIELD_TYPES = {
     "text": {"validation": ["min_length", "max_length", "pattern"]},
     "textarea": {"validation": ["min_length", "max_length", "rows"]},
-    "email": {"validation": ["required", "pattern", "check_mx", "deliverability_provider"]},
+    "email": {"validation": ["required", "pattern", "check_mx"]},
     "honeypot": {
         "validation": [],
         "optional_props": ["min_fill_seconds"],
@@ -3207,7 +3206,17 @@ FIELD_TYPES = {
 STEP_TYPES = {
     "decision": {
         "required_props": ["approver"],
-        "optional_props": ["approval_type", "signature_field", "require_login", "on_approve", "on_reject", "timeout", "sla", "sla_hours", "view_sections", "edit_sections"]
+        "optional_props": ["approval_type", "signature_field", "require_login", "on_approve", "on_reject", "timeout", "sla", "sla_hours", "view_sections", "edit_sections"],
+        "description": (
+            "A dict-style approver ({ email, name, ... }) auto-creates/reuses an external employee "
+            "via a dynamic template (e.g. approver: { email: \"${form.contact_email}\" }) — any extra "
+            "keys beyond email/name/position/employee_type are saved onto the employee record too "
+            "(e.g. department), but only when a NEW employee is created; an existing employee's "
+            "fields are never overwritten. "
+            "`timeout.sla` + `timeout.on_timeout.continue_to` routes the step when its SLA expires "
+            "instead of escalating to a manager — useful when the approver has no organizational "
+            "manager (e.g. a public_submission self-confirmation step)."
+        )
     },
     "parallel_approval": {
         "required_props": ["approvers", "approval_strategy"],
@@ -3266,14 +3275,21 @@ STEP_TYPES = {
         "optional_props": []
     },
     "spawn": {
-        "required_props": ["workflow", "items"],
-        "optional_props": ["wait_for", "pass", "map", "on_complete", "on_failure"],
+        "required_props": ["workflow"],
+        "optional_props": ["items", "wait_for", "pass", "map", "requestor_from", "on_complete", "on_failure"],
         "description": (
-            "Fan-out step that creates one child workflow instance per row in a line_items field. "
+            "Creates one or more child workflow instances. With 'items' (a line_items field name): "
+            "fan-out, one child per row. Without 'items': single-child mode, spawning exactly one "
+            "child using this instance's own request_data (e.g. promoting a public_submission "
+            "verification instance into a real business-workflow instance). "
             "The parent workflow waits for child instances to complete based on 'wait_for' strategy: "
             "'all' (default) — wait for every child; 'any' — advance on first approved child; "
             "'none' — fire-and-forget, parent advances immediately. "
-            "Field wiring priority: explicit 'map' > named 'pass' list > auto-match by field name."
+            "Field wiring priority: explicit 'map' > named 'pass' list > auto-match by field name. "
+            "'requestor_from' resolves/creates the child's requestor from a named field's value "
+            "instead of inheriting the parent's requestor — use when the parent's requestor is an "
+            "internal placeholder (e.g. public_submission's automation account) and the child should "
+            "be attributed to the real submitter."
         )
     },
     "wait_webhook": {
@@ -3293,7 +3309,15 @@ STEP_TYPES = {
     },
     "end": {
         "required_props": [],
-        "optional_props": ["metadata", "notify_requestor"]
+        "optional_props": ["metadata", "notify_requestor", "archive"],
+        "description": (
+            "Terminates the workflow (approved, or rejected if the step name contains 'reject'). "
+            "'archive' (boolean, default false) additionally hides the instance from normal "
+            "dashboards/list views — e.g. a public_submission verification instance that turned out "
+            "to be spam. Mirrors approval_workflows.is_deleted's soft-hide convention; archived "
+            "instances stay in the database (full audit trail intact) but excluded from "
+            "list queries and the monthly instance-quota count."
+        )
     }
 }
 
