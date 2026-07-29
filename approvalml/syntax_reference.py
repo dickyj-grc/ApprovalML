@@ -215,15 +215,16 @@ When a workflow is cron-triggered, the form fields receive their values from aut
 - `text` - Single line text input
 - `label` - Static text display (no input, for headings or instructions)
 - `textarea` - Multi-line text input
-- `email` - Email validation with validation. Supports `validation.check_mx` (bool — free MX-record lookup) and `validation.deliverability_provider` (e.g. `abstract_api`, `kickbox` — paid mailbox verification) for stronger checks, most relevant on `public_submission` forms:
+- `email` - Email validation with validation. Supports `validation.check_mx` (bool — free MX-record lookup) and `validation.deliverability_provider` (name of a data connector configured in Connectors admin, e.g. ZeroBounce, Kickbox, NeverBounce, or Abstract API — NOT a hardcoded provider-type string; resolved and called the same way `autocomplete`/`data_source` fields already call connectors inline, outside the step engine) for stronger checks, most relevant on `public_submission` forms:
   ```yaml
   - name: contact_email
     type: email
     required: true
     validation:
       check_mx: true
-      deliverability_provider: abstract_api
+      deliverability_provider: "Abstract Email Verify"  # data connector name, company-scoped
   ```
+  The connector's own `field_mapping` is responsible for normalizing whatever shape the provider returns into a single `deliverable: true/false` field — the platform doesn't hardcode per-provider response parsing.
 - `number` - Numeric input with validation
 - `currency` - Money amount with formatting
 - `date` - Date picker
