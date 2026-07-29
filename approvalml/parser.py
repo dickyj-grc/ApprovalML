@@ -292,6 +292,21 @@ class OptionsConfig(BaseModel):
         return self
 
 
+class HeaderGroup(BaseModel):
+    """A merged column-header group for line_items tables in PDF export."""
+    label: str = ""                    # Group header text; empty string renders a blank merged cell
+    span: int = 1                      # Number of consecutive item_fields columns this group spans
+
+    @field_validator('span')
+    @classmethod
+    def validate_span(cls, v):
+        if v is None:
+            return 1
+        if not isinstance(v, int) or v < 1:
+            raise ValueError("header_groups.span must be a positive integer")
+        return v
+
+
 class FormField(BaseModel):
     """Validation schema for form fields"""
     name: Optional[str] = None  # For array format
@@ -317,6 +332,8 @@ class FormField(BaseModel):
     min_items: Optional[int] = None
     max_items: Optional[int] = None
     item_fields: Optional[list['FormField']] = None
+    header_groups: Optional[list[HeaderGroup]] = None  # Merged PDF column headers for line_items
+    blank_rows: Optional[int] = None                   # Extra empty PDF rows for handwritten notes
 
     # Options configuration - supports both static and dynamic options
     # Static: options: [{"value": "a", "label": "A"}, ...]
@@ -348,7 +365,8 @@ class FormField(BaseModel):
     # Column layout (for line_items item_fields and header/footer grid cells)
     align: Optional[str] = None         # "left" | "center" | "right" — aligns cell content in line_items columns
                                         # and block-mode read-only field values
-    width: Optional[str] = None         # CSS width e.g. "120px", "15%"
+    width: Optional[str] = None         # CSS width e.g. "120px", "15%" — used by the web read-only table
+    print_width: Optional[str] = None   # CSS width used by the PDF line_items renderer
     height: Optional[str] = None        # CSS height e.g. "60px", "20%" — primarily for image fields
     sum: Optional[bool] = None          # If True, show column sum in the footer row (read-only mode)
     text_style: Optional[list[str]] = None  # Text styling applied to the value in read-only display.
@@ -363,8 +381,9 @@ class FormField(BaseModel):
 
     @model_validator(mode='after')
     def validate_label_required(self):
-        """label is optional only for type: label — all other types must supply it."""
-        if self.type != FieldType.LABEL and not self.label:
+        """label is optional only for type: label — all other types must supply it.
+        Print-only fields (e.g. blank PDF note columns) may have an empty label."""
+        if self.type != FieldType.LABEL and not self.label and not self.print_only:
             raise ValueError(f"Field '{self.name or '?'}': label is required for type '{self.type.value}'")
         if self.formula and self.jsonata:
             raise ValueError(f"Field '{self.name or '?'}': cannot specify both 'formula' and 'jsonata' — use one or the other")
@@ -444,6 +463,29 @@ class FormField(BaseModel):
             if v > 100:  # reasonable upper limit
                 raise ValueError("max_items should not exceed 100")
         return v
+
+    @model_validator(mode='after')
+    def validate_line_items_print_layout(self):
+        """header_groups and blank_rows are only valid on line_items fields."""
+        is_line_items = self.type == FieldType.LINE_ITEMS
+        if self.header_groups is not None and not is_line_items:
+            raise ValueError("'header_groups' is only valid for 'line_items' fields")
+        if self.blank_rows is not None and not is_line_items:
+            raise ValueError("'blank_rows' is only valid for 'line_items' fields")
+
+        if is_line_items and self.header_groups is not None:
+            item_fields = self.item_fields or []
+            total_span = sum(g.span for g in self.header_groups)
+            if total_span != len(item_fields):
+                raise ValueError(
+                    f"sum of header_groups spans ({total_span}) must equal "
+                    f"the number of item_fields ({len(item_fields)})"
+                )
+
+        if self.blank_rows is not None and self.blank_rows < 0:
+            raise ValueError("'blank_rows' must be 0 or greater")
+
+        return self
 
     # Validation rules
     min_value: Optional[Union[int, float]] = None

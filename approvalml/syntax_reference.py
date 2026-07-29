@@ -236,7 +236,7 @@ When a workflow is cron-triggered, the form fields receive their values from aut
 - `richtext` - Rich text editor (WYSIWYG) with HTML and image support
 - `markdown` - Markdown editor with toolbar for headings, lists, links, and formatting
 - `hidden` - **Deprecated.** Use `type: text` with `hidden: true` instead (see Field Properties below)
-- `line_items` - Dynamic table with repeating rows
+- `line_items` - Dynamic table with repeating rows; supports grouped PDF headers and print-only handwritten-note columns
 - `autocomplete` - Search-as-you-type field with data source integration
 - `autonumber` - Auto-incrementing sequential number (e.g. EXP-00042). Read-only; generated at submission. Supports `prefix` and `pad_length`.
 - `json` - Structured JSON data field with interactive tree view and syntax highlighting support.
@@ -249,9 +249,11 @@ When a workflow is cron-triggered, the form fields receive their values from aut
   type: "text"
   label: "Display Label"
   show_label: false   # If false, hides the label caption (useful in header/footer zones)
-  width: "120px"      # Column width (CSS value: "120px", "15%", "auto") — line_items columns only
+  width: "120px"      # Column width (CSS value: "120px", "15%", "auto") — web read-only table
+  print_width: "15%"  # Column width for PDF export — line_items columns only
 ```
-`width` is for `item_fields` inside `line_items` to set column widths.
+`width` is for `item_fields` inside `line_items` to set column widths in the web read-only table.
+`print_width` sets the PDF column width; if omitted, the PDF falls back to `width` and then to auto layout.
 `show_label: false` suppresses the label so only the field value appears — common in invoice headers.
 
 **Layout attributes (`align`, `bottom_border`) belong in `layout.defaults` or `section.fields`, not on
@@ -338,7 +340,7 @@ form:
 
 **`hidden: true`** — use for fields that automatic steps write into and workflow conditions read, but approvers do not need to see. Must be `type: text` or `type: textarea`.
 
-**`print_only: true`** — use for fields that should appear in the PDF document but not in the form UI.
+**`print_only: true`** — use for fields that should appear in the PDF document but not in the form UI. Also valid on `item_fields` inside `line_items` to add PDF-only columns such as blank note columns.
 
 ```yaml
 - name: "weather_raw"
@@ -479,6 +481,55 @@ For `file_upload` fields, you can force the use of the device camera for capturi
       readonly: true
       calculated: true
       formula: "quantity * unit_price"
+```
+
+**PDF-only line-item columns and grouped headers:**
+Use `print_only: true` on an `item_fields` column to show it only in the PDF, and use
+`header_groups` to render merged column headers. `blank_rows` appends empty rows in the
+PDF for handwritten notes.
+
+```yaml
+- name: "invoice_lines"
+  type: "line_items"
+  label: "Invoice Lines"
+  item_fields:
+    - name: "description"
+      type: "text"
+      label: "Description"
+      print_width: "40%"
+    - name: "quantity"
+      type: "number"
+      label: "Qty"
+      align: "right"
+      print_width: "12%"
+    - name: "unit_price"
+      type: "currency"
+      label: "Unit Price"
+      currency: "IDR"
+      align: "right"
+      print_width: "18%"
+    - name: "total"
+      type: "currency"
+      label: "Total"
+      currency: "IDR"
+      align: "right"
+      print_width: "18%"
+    - name: "note_1"
+      type: "text"
+      label: ""
+      print_only: true       # hidden in web form; visible only in PDF
+      print_width: "6%"
+    - name: "note_2"
+      type: "text"
+      label: ""
+      print_only: true
+      print_width: "6%"
+  header_groups:
+    - label: "Article Details"
+      span: 4                # description, quantity, unit_price, total
+    - label: "Notes"
+      span: 2                # note_1, note_2
+  blank_rows: 3              # extra empty PDF rows for handwriting
 ```
 
 **Cross-field validation with line_items:**
@@ -3127,7 +3178,11 @@ FIELD_TYPES = {
         "validation": ["required", "min_length", "max_length"],
         "description": "Markdown editor field. Supports headings, bold, italic, lists, links, and thematic breaks. Value is stored as plain Markdown text in request_data."
     },
-    "line_items": {"requires_one_of": ["item_fields", "columns"], "validation": ["min_items", "max_items"]},
+    "line_items": {
+        "requires_one_of": ["item_fields", "columns"],
+        "validation": ["min_items", "max_items"],
+        "optional_props": ["header_groups", "blank_rows"],
+    },
     "autocomplete": {
         "required_props": ["options"],  # Changed: now requires options instead of data_source
         "validation": ["required"],
