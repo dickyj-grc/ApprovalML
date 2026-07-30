@@ -532,6 +532,23 @@ PDF for handwritten notes.
   blank_rows: 3              # extra empty PDF rows for handwriting
 ```
 
+**`header_groups` span must equal the item_fields count.** Each group's `span` is a column count, and the spans across all groups must sum to exactly the number of `item_fields` (6 above: description, quantity, unit_price, total, note_1, note_2) — a mismatch misaligns the grouped header row against the individual column headers/data beneath it in the rendered PDF.
+
+**In-table column total — `sum: true` on an item_field:**
+Add `sum: true` to a numeric `item_fields` column (`currency`/`number`) to render a totals row as the *last row of that table*, directly under the column it sums — not a separate field elsewhere on the form:
+
+```yaml
+    - name: "total"
+      type: "currency"
+      label: "Total"
+      currency: "IDR"
+      align: "right"
+      print_width: "18%"
+      sum: true              # adds a totals row under this column in the PDF table
+```
+
+This is independent of (and can be combined with) the top-level `calculated: true` + `jsonata: "$sum(...)"` pattern below — that produces a separate form field you can place anywhere in the layout (e.g. next to other summary fields), while `sum: true` only affects the PDF's own line-items table rendering and adds nothing to the live web form.
+
 **Cross-field validation with line_items:**
 Use `required_unless` and `empty_when` to create mutually-exclusive controls such as
 "No allergens" checkbox + a structured allergen table.
