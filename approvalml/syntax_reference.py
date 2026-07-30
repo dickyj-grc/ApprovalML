@@ -837,6 +837,22 @@ form:
 5. **Layout Defaults**: Set default layout attributes per field across all sections via `layout.defaults`
 6. **Section Overrides**: Override layout per field within a specific section via `section.fields`
 
+### Grid row header_groups (PDF print only)
+
+A `grid` row (not `columns`) can be an object instead of a bare list of field names, to print a merged group-header bar above a block of related fields — the same `{label, span}` mechanism as `line_items.header_groups`, just at the section-grid level. Plain array rows are unaffected and can coexist with object rows in the same grid.
+
+```yaml
+grid:
+  - ["item_description"]                          # plain row — unchanged
+  - fields: ["approver1_name", "approver1_date", "approver1_signature",
+             "approver2_name", "approver2_date", "approver2_signature"]
+    header_groups:
+      - { label: "Approver 1", span: 3 }
+      - { label: "Approver 2", span: 3 }
+```
+
+Spans must sum to exactly the row's `fields` count. This only affects the printed PDF — it has no effect on the live submission form, the read-only web view, or the Workflow Studio layout preview, which don't yet render group headers for section grids (unlike `line_items`, which already had a table `<thead>` to extend).
+
 ### Layout Attribute Priority
 
 Layout attributes are resolved in this order (highest priority wins):
