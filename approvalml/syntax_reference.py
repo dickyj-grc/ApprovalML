@@ -534,8 +534,8 @@ PDF for handwritten notes.
 
 **`header_groups` span must equal the item_fields count.** Each group's `span` is a column count, and the spans across all groups must sum to exactly the number of `item_fields` (6 above: description, quantity, unit_price, total, note_1, note_2) — a mismatch misaligns the grouped header row against the individual column headers/data beneath it in the rendered PDF.
 
-**In-table column total — `sum: true` on an item_field:**
-Add `sum: true` to a numeric `item_fields` column (`currency`/`number`) to render a totals row as the *last row of that table*, directly under the column it sums — not a separate field elsewhere on the form:
+**In-table column aggregate — `aggregate:` on an item_field:**
+Add `aggregate: sum | count | average | min | max` to a numeric `item_fields` column (`currency`/`number`) to render an aggregate row as the *last row of that table*, directly under the column it summarizes — not a separate field elsewhere on the form:
 
 ```yaml
     - name: "total"
@@ -544,10 +544,29 @@ Add `sum: true` to a numeric `item_fields` column (`currency`/`number`) to rende
       currency: "IDR"
       align: "right"
       print_width: "18%"
-      sum: true              # adds a totals row under this column in the PDF table
+      aggregate: sum          # sum | count | average | min | max
 ```
 
-This is independent of (and can be combined with) the top-level `calculated: true` + `jsonata: "$sum(...)"` pattern below — that produces a separate form field you can place anywhere in the layout (e.g. next to other summary fields), while `sum: true` only affects the PDF's own line-items table rendering and adds nothing to the live web form.
+`count` counts the non-empty values in that column (usually equal to the row count for a `required` field); `sum`/`average`/`min`/`max` operate over the non-empty numeric values, ignoring blank rows. `sum: true` still works as a backward-compatible alias for `aggregate: sum` (the property this generalizes). The aggregate row also appears in the web read-only view (Request Details / approval page), not just the PDF — this is independent of (and can be combined with) the top-level `calculated: true` + `jsonata: "$sum(...)"` pattern below, which instead produces a separate, independently-placed form field and has no connection to `aggregate:`/`aggregate_label` at all.
+
+**Labeling the aggregate row — `aggregate_label` on the `line_items` field itself** (not on an item_field):
+
+```yaml
+- name: "invoice_lines"
+  type: "line_items"
+  label: "Invoice Lines"
+  aggregate_label: "TOTAL"    # merged across every column before the first aggregate: column
+  item_fields:
+    - name: "description"
+      type: "text"
+      label: "Description"
+    - name: "amount"
+      type: "currency"
+      label: "Amount"
+      aggregate: sum
+```
+
+Without `aggregate_label`, the aggregate row is just the bare value with every other cell blank. With it, every column *before* the first `aggregate:` column is merged into one right-aligned cell showing the label, immediately followed by the actual aggregate — e.g. `| ... (merged, blank) ... | TOTAL |  Rp 34.850.000,00  |`. Has no effect if the `line_items` field has no `aggregate:` column at all. Multiple `aggregate:` columns can coexist (e.g. a `count` on one column and a `sum` on another) — each renders its own value in the same row; the label only merges columns before the *first* one.
 
 **Cross-field validation with line_items:**
 Use `required_unless` and `empty_when` to create mutually-exclusive controls such as
