@@ -41,6 +41,7 @@ class StepType(str, Enum):
     AUTOMATIC = "automatic"  # For API/connector calls only
     NOTIFICATION = "notification"  # For sending notifications
     SPAWN = "spawn"  # Fan-out: one child workflow instance per line_items row
+    LOOP = "loop"  # Iterative sub-workflow execution with condition
     WAIT_WEBHOOK = "wait_webhook"  # Pauses execution and waits for webhook
     END = "end"
 
@@ -649,6 +650,29 @@ class ActionConfig(BaseModel):
     custom_actions: Optional[dict[str, Any]] = None
 
 
+class LoopConfig(BaseModel):
+    """Configuration for iterative loop control on decision/automatic steps.
+
+    When a step with a `loop` block completes, the engine evaluates `while`.
+    If true and under `max_iterations`, it routes to `continue_to` instead of
+    the normal outcome routing. This enables simple feedback/retry loops without
+    requiring a separate sub-workflow file.
+    """
+    continue_to: str  # Step name to execute next on each iteration
+    while_expr: str = Field(alias='while')  # JSONata/rule-engine condition evaluated against request_data
+    max_iterations: int = Field(default=20, ge=1, le=1000)
+
+
+class SpawnLoopConfig(BaseModel):
+    """Configuration for spawn-style iterative loops (type: loop).
+
+    Reuses the same semantics as `spawn` but runs the child workflow repeatedly
+    until `while` becomes false or `max_iterations` is reached.
+    """
+    while_expr: str = Field(alias='while')  # Condition evaluated after each iteration
+    max_iterations: int = Field(default=20, ge=1, le=1000)
+
+
 class NotificationRecipient(BaseModel):
     """Recipient configuration for notifications."""
     email: Optional[str] = None      # Specific email or variable like ${instance.requester_email}
@@ -820,6 +844,18 @@ class WorkflowStep(BaseModel):
     source: Optional[str] = None
     match: Optional[WebhookMatch] = None
 
+    # Loop control (lightweight loop block on decision/automatic steps)
+    loop: Optional[LoopConfig] = None
+
+    # Spawn-style loop fields (for type: loop)
+    workflow: Optional[str] = None  # Child workflow name to iterate
+    items: Optional[str] = None  # Optional line_items field to iterate over (advanced)
+    while_expr: Optional[str] = Field(default=None, alias="while")  # Condition to keep iterating
+    max_iterations: Optional[int] = Field(default=None, ge=1, le=1000)
+    pass_fields: Optional[list[str]] = Field(default=None, alias="pass")
+    field_map: Optional[dict[str, str]] = Field(default=None, alias="map")
+    return_fields: Optional[dict[str, str]] = Field(default=None, alias="return")
+
     # Actions
     on_approve: Optional[ActionConfig] = None
     on_reject: Optional[ActionConfig] = None
@@ -973,6 +1009,15 @@ class WorkflowStep(BaseModel):
                 raise ValueError("Notification steps must have 'recipients'")
             if not self.notification:
                 raise ValueError("Notification steps must have 'notification' with message")
+
+        # Loop steps must reference a child workflow and define iteration control
+        if self.type == StepType.LOOP:
+            if not self.workflow:
+                raise ValueError("Loop steps must specify 'workflow' (child workflow name)")
+            if not self.while_expr:
+                raise ValueError("Loop steps must specify 'while' (continuation condition)")
+            if self.max_iterations is None:
+                self.max_iterations = 20
 
         return self
 

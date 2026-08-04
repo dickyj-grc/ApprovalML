@@ -85,7 +85,7 @@ settings:
 2. ✅ **Form Sections:** Must separate `layout.sections` from `fields`: `form: { layout: {...}, fields: [...] }`
    - ❌ **DO NOT** embed fields inside sections: `form: [{ section: { fields: [...] } }]`
 
-3. ✅ **Step Types:** Use `decision`, `parallel_approval`, `conditional_split`, `automatic`, `notification`, `end`
+3. ✅ **Step Types:** Use `decision`, `parallel_approval`, `conditional_split`, `automatic`, `notification`, `spawn`, `loop`, `end`
    - ❌ **DO NOT** use deprecated type: `approval`
 
 4. ✅ **Key Order:** Always output top-level keys in this exact canonical order:
@@ -1472,7 +1472,7 @@ workflow:
     type: "decision"
 ```
 
-**Valid Step Types:** `decision`, `parallel_approval`, `conditional_split`, `automatic`, `notification`, `end`
+**Valid Step Types:** `decision`, `parallel_approval`, `conditional_split`, `automatic`, `notification`, `spawn`, `loop`, `end`
 **Invalid/Deprecated Type:** `approval` (use `decision` instead)
 
 ### 1. Decision Steps (`decision`)
@@ -2419,7 +2419,66 @@ In test mode (instance metadata `is_test_mode: true`), the spawn step logs what 
 - `on_complete`: Routing when fan-in threshold is met
 - `on_failure`: Routing when any child is rejected/failed (for `all` strategy)
 
-### 7. Wait Webhook Step (`wait_webhook`)
+### 7. Loop Step (`loop`)
+**For iterative sub-workflow execution.** Runs a child workflow repeatedly until a `while` condition becomes false or `max_iterations` is reached. After each completed iteration, values can be copied from the child's `request_data` back into the parent, and the condition is re-evaluated.
+
+```yaml
+refine_estimate:
+  type: "loop"
+  name: "Refine Estimate Loop"
+  workflow: "estimate-refinement"     # Child workflow name to run each iteration
+  while: "needs_refinement == 'true'" # Continuation condition evaluated against parent request_data
+  max_iterations: 10                   # Safety cap (default 20)
+  pass:                                # Parent fields copied into each child request_data
+    - "department"
+    - "budget_code"
+  map:                                 # Explicit child_field: parent_field renames
+    estimate_id: "proposal_id"
+  return:                              # Copy child results back into parent request_data
+    refined_amount: "total_amount"     # child request_data.refined_amount → parent.total_amount
+    needs_refinement: "needs_refinement"
+  on_complete:
+    continue_to: "final_approval"
+  on_failure:
+    continue_to: "escalation"
+```
+
+**Iteration Control:**
+- `while`: Condition evaluated after each child completes. While true, another iteration starts.
+- `max_iterations`: Hard cap on iterations (default `20`). When reached, the loop exits and follows `on_complete` regardless of `while`.
+
+**Field Wiring (`pass`, `map`, `return`):**
+- `pass`: List of top-level parent field names copied verbatim into each child's `request_data`.
+- `map`: Dict of `child_field: parent_field` — renames or selects specific parent fields for the child.
+- `return`: Dict of `child_field: parent_field` — copies values from the completed child's `request_data` back into the parent before the next `while` evaluation.
+
+**Routing:**
+- `on_complete`: Followed when the loop exits because `while` became false or `max_iterations` was reached after an approved child.
+- `on_failure`: Followed when a child instance is rejected. If omitted, the parent workflow is rejected.
+
+**Test Mode Behavior:**
+In test mode (`is_test_mode: true`), the loop step creates an immediately-approved coordinator and follows `on_complete` without running real child instances, so `return` values are not applied.
+
+### Lightweight `loop:` Block on Decision/Automatic Steps
+A simpler loop can be attached directly to `decision` or `automatic` steps without a separate child workflow. After the step completes, the `while` condition is evaluated; if true, the engine routes to `loop.continue_to` instead of the normal outcome routing.
+
+```yaml
+check_quality:
+  type: "decision"
+  approver: "quality_manager"
+  loop:
+    continue_to: "check_quality"       # Loop back to this same step
+    while: "quality_score < 80"
+    max_iterations: 5
+  on_approve:
+    continue_to: "finish"
+  on_reject:
+    continue_to: "rework"
+```
+
+Use this for retry/rework loops where the same step (or an earlier step) should be re-run until a condition is satisfied. Iteration counts are stored in `instance.metadata.loop_state`.
+
+### 8. Wait Webhook Step (`wait_webhook`)
 **For pausing a workflow until an external service fires.** Blocks execution at a step until an external webhook payload arrives, then optionally captures values from the payload into form fields before advancing.
 
 Typical uses: waiting for an ERP to confirm an order, a payment gateway to confirm a transaction, a CI system to report a build result, or any process that spans system boundaries.
@@ -2462,7 +2521,7 @@ wait_so_validation:
 - `timeout.sla`: SLA duration string (e.g. `"3d"`, `"4h"`)
 - `timeout.on_timeout.continue_to`: Step to route to when the SLA expires
 
-### 8. End Step (`end`)
+### 9. End Step (`end`)
 Explicit workflow termination nodes. **RECOMMENDED** for complex workflows with multiple outcomes:
 
 ```yaml
@@ -2770,7 +2829,7 @@ When generating ApprovalML YAML, ensure:
    - ✅ Correct: `form: { layout: { sections: [...] }, fields: [...] }`
    - ❌ Wrong: `form: [{ section: { fields: [...] } }]`
 
-3. **Step Types**: Use ONLY valid step types: `decision`, `parallel_approval`, `conditional_split`, `automatic`, `notification`, `end`
+3. **Step Types**: Use ONLY valid step types: `decision`, `parallel_approval`, `conditional_split`, `automatic`, `notification`, `spawn`, `loop`, `end`
    - ❌ NEVER use: `approval` (this is deprecated)
 
 4. **Required Fields**: All steps must have `name`, `type`, and appropriate routing
@@ -3347,7 +3406,7 @@ FIELD_TYPES = {
 STEP_TYPES = {
     "decision": {
         "required_props": ["approver"],
-        "optional_props": ["approval_type", "signature_field", "require_login", "on_approve", "on_reject", "timeout", "sla", "sla_hours", "view_sections", "edit_sections"],
+        "optional_props": ["approval_type", "signature_field", "require_login", "on_approve", "on_reject", "loop", "timeout", "sla", "sla_hours", "view_sections", "edit_sections"],
         "description": (
             "A dict-style approver ({ email, name, ... }) auto-creates/reuses an external employee "
             "via a dynamic template (e.g. approver: { email: \"${form.contact_email}\" }) — any extra "
@@ -3369,7 +3428,7 @@ STEP_TYPES = {
     },
     "automatic": {
         "required_props": ["on_complete"],
-        "optional_props": ["api", "data_processor", "asset", "field_mapping", "on_failure"],
+        "optional_props": ["api", "data_processor", "asset", "field_mapping", "loop", "on_failure"],
         "requires_one_of": ["api", "data_processor", "asset", "field_mapping"],
         "field_mapping_description": (
             "Extracts and transforms values from webhook payloads or API responses into form fields. "
@@ -3431,6 +3490,17 @@ STEP_TYPES = {
             "instead of inheriting the parent's requestor — use when the parent's requestor is an "
             "internal placeholder (e.g. public_submission's automation account) and the child should "
             "be attributed to the real submitter."
+        )
+    },
+    "loop": {
+        "required_props": ["workflow", "while"],
+        "optional_props": ["max_iterations", "pass", "map", "return", "on_complete", "on_failure"],
+        "description": (
+            "Iteratively runs a child workflow until the 'while' condition becomes false or "
+            "'max_iterations' is reached. After each iteration, 'return' fields are copied from the "
+            "child's request_data back into the parent, and 'while' is re-evaluated. Reuses the same "
+            "field-wiring semantics as 'spawn': 'pass' copies parent fields into the child, 'map' "
+            "renames them, and 'return' copies child results back to the parent."
         )
     },
     "wait_webhook": {
