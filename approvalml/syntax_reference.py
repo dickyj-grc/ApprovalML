@@ -1916,6 +1916,8 @@ save_supplier_data:
 - `fields_to`: Dict of `{field_name: variable_name}` — reads multiple individual fields at once
 - `merge_from`: Variable supplying a partial dict — shallow-merged into `properties` (other keys untouched)
 - `fields_from`: Dict of `{field_name: variable_name}` — writes each variable into the named field; other keys are preserved
+- `schema`: Optional asset schema name to assign on create, or to backfill when the asset's `schema_id` is NULL (existing schema is never overwritten)
+- `schema_definition`: Optional `{description, fields, field_order}` used to auto-create the named schema when it does not yet exist for the company. Ignored without `schema:`.
 
 **Test Mode Behavior:**
 - `asset` write (`data_from` / `merge_from` / `fields_from` / `field`+`data_from`): Writes to user-scoped sandbox copy; production asset is not modified
@@ -3396,11 +3398,12 @@ STEP_TYPES = {
             "on_failure", "category", "field",
             "fields_from", "fields_to", "data_from", "data_to",
             "merge_from", "list_by_category", "bulk_upsert", "delete",
+            "schema", "schema_definition",
         ],
         "asset_props": {
             "required": ["asset_name"],
             "one_of": [["data_from"], ["data_to"], ["merge_from"], ["fields_to"], ["fields_from"]],
-            "optional": ["category", "field"]
+            "optional": ["category", "field", "schema", "schema_definition"]
         },
         "description": (
             "Reads or writes values between workflow variables and an asset registry record. "
@@ -3408,7 +3411,9 @@ STEP_TYPES = {
             "Wrapped form: type: asset with an asset: block. "
             "Direction: fields_from (vars→asset), fields_to (asset→vars), "
             "data_from (var→asset full replace), data_to (asset→var full read), "
-            "field+data_from/data_to (single-field), merge_from (partial merge)."
+            "field+data_from/data_to (single-field), merge_from (partial merge). "
+            "Optional schema: assigns an asset schema by name on create (or backfills NULL schema_id); "
+            "schema_definition auto-creates the named schema when missing."
         )
     },
     "notification": {
