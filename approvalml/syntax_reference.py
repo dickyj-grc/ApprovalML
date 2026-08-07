@@ -568,6 +568,26 @@ Add `aggregate: sum | count | average | min | max` to a numeric `item_fields` co
 
 Without `aggregate_label`, the aggregate row is just the bare value with every other cell blank. With it, every column *before* the first `aggregate:` column is merged into one right-aligned cell showing the label, immediately followed by the actual aggregate — e.g. `| ... (merged, blank) ... | TOTAL |  Rp 34.850.000,00  |`. Has no effect if the `line_items` field has no `aggregate:` column at all. Multiple `aggregate:` columns can coexist (e.g. a `count` on one column and a `sum` on another) — each renders its own value in the same row; the label only merges columns before the *first* one.
 
+**Hiding an empty table entirely — `hide_when_empty`:**
+A `line_items` field with `min_items: 1` (or higher) always has at least one row in submitted data, because the web form auto-adds a blank placeholder row even when the user leaves the table empty. Without `hide_when_empty`, that placeholder still prints as a table of dashes plus a `0` aggregate row — e.g. an optional "Lampiran" attachment table with nothing attached. Set `hide_when_empty: true` on the field to suppress its label *and* table together whenever every row's real columns (excluding `print_only` columns) are blank or zero:
+
+```yaml
+- name: "lampiran"
+  type: "line_items"
+  label: "Lampiran"
+  hide_when_empty: true   # omit the label + table when there's no real data
+  item_fields:
+    - name: "keterangan"
+      type: "text"
+      label: "Keterangan"
+    - name: "nilai"
+      type: "currency"
+      label: "Nilai"
+      aggregate: sum
+```
+
+Defaults to `false` — existing workflows that rely on a visible zero total are unaffected.
+
 **Cross-field validation with line_items:**
 Use `required_unless` and `empty_when` to create mutually-exclusive controls such as
 "No allergens" checkbox + a structured allergen table.
@@ -3292,7 +3312,7 @@ FIELD_TYPES = {
     "line_items": {
         "requires_one_of": ["item_fields", "columns"],
         "validation": ["min_items", "max_items"],
-        "optional_props": ["header_groups", "blank_rows"],
+        "optional_props": ["header_groups", "blank_rows", "hide_when_empty"],
     },
     "autocomplete": {
         "required_props": ["options"],  # Changed: now requires options instead of data_source
