@@ -2,13 +2,14 @@
 
 Multi-party approval workflows for AI agent tool calls. Define maker-checker chains in YAML, get a tamper-evident record of every decision.
 
-**ApprovalML** is a headless approval workflow engine for AI agents. When an agent calls a tool that moves money, touches production, or grants access, a single "approve" click isn't a control — it's a formality. ApprovalML lets you declare real authorization chains in YAML — serial (supervisor → finance → director), parallel (any-one, majority, all), conditional on the call's payload — and wraps any MCP server so guarded tool calls pend until the chain completes. Every decision is identity-bound and written to a hash-chained, tamper-evident audit trail: not just *that* the call was approved, but *who* authorized it, and in what order.
+**ApprovalML** is a headless approval workflow engine for AI agents. When an agent calls a tool that moves money, touches production, or grants access, a single "approve" click isn't a control — it's a formality. ApprovalML lets you declare real authorization chains in YAML — serial (supervisor → finance → director), parallel (any-one, majority, all), conditional on the call's payload — expose each one as an MCP tool an agent can call directly, and put safe recurring work on a governed cron schedule instead of an agent's own loop. Every decision is identity-bound and written to a hash-chained, tamper-evident audit trail: not just *that* the call was approved, but *who* authorized it, and in what order.
 
 No LLM in the enforcement path. AI proposes the action; the approval chain is deterministic YAML, executed exactly as written. Humans are named in `.env`, workflows are portable, and the whole thing runs from the command line with docker compose — no UI required.
 
 - **Multi-party chains, not single gates** — serial steps, parallel strategies (all / any-one / majority), conditional routing on tool-call data
-- **MCP-native** — proxy any MCP server; guarded tools pend, approvers decide via email/Slack/webhook, the agent polls and resumes
-- **Tamper-evident audit trail** — every action (creation, decision, auto-skip) is hash-chained with actor identity and timestamp — see [Audit Trail](#audit-trail)
+- **MCP-native** — point `--workflows-dir` at a folder of workflow YAML and every file becomes a `submit_<name>` tool with a real JSON-schema input generated from the form fields — see [Expose a Workflow Directory as MCP](#expose-a-workflow-directory-as-mcp)
+- **Governed scheduling** — cron triggers ship disabled; an agent can arm or observe a schedule through MCP tools, but the runtime's own scheduler ticks it — never the agent's loop — see [Scheduled Workflows](#scheduled-workflows)
+- **Tamper-evident audit trail** — every action (creation, decision, auto-skip, scheduler run) is hash-chained with actor identity and timestamp — see [Audit Trail](#audit-trail)
 - **Deterministic runtime** — the YAML is compiled policy; no model decides who approves what
 - **Roles via environment** — `approver: finance_manager` resolves through `APPROVALML_ROLE_FINANCE_MANAGER` in `.env`, so workflow templates are shareable without a company directory
 - **Headless by design** — CLI + `approvalml validate`, config in git, alerts to the tools you already have
@@ -71,88 +72,109 @@ Add to `~/.claude/claude_desktop_config.json`:
 
 The MCP server is stateless — it calls the runtime REST API. It works with the [standalone runtime](#standalone-runtime) below or with a hosted ApprovalML instance.
 
-## Wrap Any MCP Server
+## Expose a Workflow Directory as MCP
 
-Gate an existing MCP server — one you didn't write, running as a local stdio subprocess (e.g. `npx -y @modelcontextprotocol/server-github`) — without touching its code. `approvalml` spawns it, classifies its tools, and re-exposes a gated version over its own stdio:
+Point the MCP server at a directory of workflow YAML files and every one of them becomes a callable tool — no per-server wrapping, no upstream process to spawn, no classification heuristics. `approvalml` parses each file, registers it with the runtime, and exposes `submit_<name>` with an `inputSchema` generated straight from that workflow's `form.fields`:
+
+```bash
+export APPROVALML_API_URL=http://localhost:8765
+export APPROVALML_API_TOKEN=<your-token>
+export APPROVALML_WORKFLOWS_DIR=./workflows
+approvalml mcp-server
+```
+
+Or via Claude Desktop config:
 
 ```json
 {
   "mcpServers": {
-    "github-guarded": {
-      "command": "uvx",
-      "args": ["approvalml", "--", "npx", "-y", "@modelcontextprotocol/server-github"],
+    "approvalml": {
+      "command": "approvalml",
+      "args": ["mcp-server"],
       "env": {
-        "APPROVALML_APPROVER": "you@personal.com",
-        "APPROVALML_NOTIFY": "slack:https://hooks.slack.com/services/XXX"
+        "APPROVALML_API_URL": "http://localhost:8765",
+        "APPROVALML_API_TOKEN": "your-token-here",
+        "APPROVALML_WORKFLOWS_DIR": "/absolute/path/to/workflows"
       }
     }
   }
 }
 ```
 
-Each wrapped server gets its own `mcpServers` entry, exactly like today — no shared config file, no migration of your existing setup.
+`./workflows/purchase-request.yaml` becomes the tool `submit_purchase_request`, with required/optional fields, `select`/`multiselect` enums, and types all derived from the YAML — the agent never sees a bare, untyped JSON blob. Calling it validates required fields and submits exactly like the REST API; the agent gets back an `instance_id` to poll with `check_approval_status`, same as `request_approval`. Field types not meant for programmatic input (`calculated`, `readonly`, `jsonata`, `hidden`, `label`, `image`) are excluded from the schema automatically.
 
-**Zero-config classification** (no YAML needed): each tool is classified `auto` (forwarded directly) or `gate` (pends for approval) using two independent signals that must agree for `auto` — MCP tool annotations (`readOnlyHint`/`destructiveHint`) and a name-prefix heuristic (`get_*`/`list_*`/`search_*`/`read_*`/`describe_*` = safe; `create_*`/`update_*`/`delete_*`/`merge_*`/`write_*`/`send_*`/`execute_*` = sensitive). Disagreement or a missing signal defaults to `gate` — ambiguity pends, it never silently passes.
+## Scheduled Workflows
 
-- `APPROVALML_APPROVER` — the approver email used for every gated call.
-- `APPROVALML_NOTIFY=<channel>:<target>` — deliver the approval request via `slack`/`teams`/`lark`/`google_chat`, in addition to email. The target is a plain incoming-webhook URL — no bot token needed.
-
-**YAML escalation** (optional): set `APPROVALML_CONFIG` to a classification file to route specific tools through conditional_split/serial-approval-chain workflows instead of a single gate. Two shapes are supported:
-
-**`guards:`** — one file is both the classifier *and* the escalation workflow for the whole server (recommended for a single wrapped server):
+A workflow's own `triggers:` block (the same syntax used on Aptiwise SaaS) can declare a cron schedule — but registering it never starts the clock. Every trigger ships **disabled**; arming one is a separate, governed, audited act:
 
 ```yaml
-name: "GitHub MCP Guard"
+name: "Daily CVE Risk Scan"
 
-guards:
-  tools:
-    "get_*": auto       # forwarded directly, no approval step
-    "list_*": auto
-    "search_*": auto
-    # everything else falls through to this file's own workflow: below
+triggers:
+  - type: cron
+    schedule: "0 2 * * *"
+    preset_form_data:
+      manifest_path: "requirements.txt"
+      severity_threshold: "critical"
 
 form:
   fields:
-    - name: tool_name
+    - name: manifest_path
       type: text
-      label: "Tool"
-      readonly: true
+    - name: severity_threshold
+      type: select
+      options: [critical, high, medium]
 
 workflow:
-  route:
-    name: route
-    type: conditional_split
-    choices:
-      - conditions: "tool_name == 'merge_pull_request'"
-        continue_to: reviewer_approval
-    default:
-      continue_to: done
-  reviewer_approval:
-    name: reviewer_approval
-    type: decision
-    approver: "reviewer"
-    on_approve: { continue_to: "done" }
-    on_reject: { end_workflow: true }
-  done:
-    name: done
-    type: end
+  # ...
 ```
 
-See a full worked example at [`examples/mcp-guards/github-merge-guard.yaml`](examples/mcp-guards/github-merge-guard.yaml).
+`preset_form_data` is the standing input a scheduled run submits with — `form.fields` stays the schema used to validate it (and to drive an ad-hoc manual run of the same workflow). The runtime's own `WorkflowScheduler` — not the agent — owns every tick: it polls for due triggers, submits the run, records success/failure to the audit log, and auto-disables a trigger after 5 consecutive failures rather than looping on a broken schedule forever.
 
-**`rules:`** — a flat classification file that routes individual tools to separately named workflows (use this when different tools need different, independently-maintained workflows):
+MCP tools for the schedule's management plane — configure and observe, never fire a tick directly:
+
+| Tool | What it does |
+|---|---|
+| `register_workflow` | Register/replace a workflow YAML by name. New triggers land disabled. |
+| `list_workflows` | List every registered workflow with a trigger summary. |
+| `get_schedule_status` | Per-trigger enabled/next_run/last_status/consecutive_failures. |
+| `set_schedule_enabled` | Arm or disarm one trigger. Requires the admin token; always pass a `reason` — it's written to the audit log with the calling identity. |
+| `run_now` | Submit a workflow immediately as an explicit, recorded manual override — distinct from a scheduler tick, doesn't touch the cron schedule. |
+
+There is deliberately no "fire this trigger" tool. If an agent had to call something on a cadence to keep a scheduled workflow running, every failure mode that cadence is supposed to protect against — a crashed process, an expired token, an agent that reasons itself out of the loop — comes back, with no recorded miss. The agent may arm the control and watch it run; the ticking stays inside the runtime.
+
+## External Data Fetches (`automatic` steps)
+
+An `automatic` step's `data_processor.source_name` can resolve against a workflow's own top-level `sources:` registry instead of a database — the standalone runtime's stand-in for Aptiwise SaaS's `data_connectors`/`data_sources` tables:
 
 ```yaml
-rules:
-  - match: "get_*"
-    action: auto
-  - match: "merge_pull_request"
-    action: workflow
-    workflow: github_merge_guard   # a separately named, separately loaded workflow file
-default_action: gate               # applied when no rule matches
+sources:
+  vendor_po:
+    connector:
+      type: rest_api
+      base_url: "${env.VENDOR_BASE_URL}"
+      auth: { type: bearer, token: "${env.VENDOR_TOKEN}" }
+    source:
+      endpoint: "/pos/{po_id}"
+      method: GET
+
+workflow:
+  match_po:
+    name: match_po
+    type: automatic
+    data_processor:
+      source_name: vendor_po
+      save_to: po
+      params:
+        - name: po_id
+          from_field: field.po_number
+    on_complete:
+      continue_to: manager_review
+    on_failure:
+      continue_to: manual_review
 ```
 
-Because the wrapper hands the tool call's arguments straight into `form_data` (as `{tool_name, arguments}` — `arguments` is the tool call's raw argument object, addressable in `jsonata` as `arguments.<name>`), the referenced workflow only ever needs `decision`/`parallel_approval`/`conditional_split`/`notification`/`end` — the same step types supported identically by both this standalone runtime and Aptiwise SaaS. Upgrading later is just repointing `APPROVALML_API_URL`/`APPROVALML_API_TOKEN` at a hosted instance; the classification config and workflow YAML stay unchanged. Approver roles (`approver: finance_manager`) resolve via `APPROVALML_ROLE_FINANCE_MANAGER` in this mode too — see [Approver Roles](#approver-roles).
+Credentials are environment references (`${env.VENDOR_TOKEN}`) — the standalone runtime's equivalent of a reusable, named connector credential. Promoting a workflow to Aptiwise SaaS is a literal copy: the `connector:` object becomes a `data_connectors` row, `source:` becomes a `data_sources` row, and the `sources:` block is deleted — the `workflow:` section itself never changes. `source_id` (a DB-managed data source) and `api:` connector actions both require SaaS-only infrastructure and are rejected with a clear error, same as before this feature existed.
 
 ---
 
@@ -262,7 +284,10 @@ Alice's agent submits with `alice@example.com` as the submitter. `list_pending_a
 | `APPROVALML_TOKENS` | _(empty)_ | Seed user tokens at startup: `token:email,token:email:Name` |
 | `DATABASE_URL` | `postgresql://approvalml:approvalml@localhost:5432/approvalml` | PostgreSQL DSN |
 | `APPROVALML_SERVER_URL` | `http://localhost:8765` | Public URL embedded in email approve/reject links |
-| `WORKFLOWS_DIR` | _(empty)_ | Directory of `*.yaml` files loaded into DB on startup |
+| `WORKFLOWS_DIR` | _(empty)_ | Directory of `*.yaml` files loaded into DB on startup (server-side) |
+| `APPROVALML_WORKFLOWS_DIR` | _(empty)_ | Directory of `*.yaml` files exposed as `submit_<name>` MCP tools (mcp-server-side) — see [Expose a Workflow Directory as MCP](#expose-a-workflow-directory-as-mcp) |
+| `APPROVALML_SCHEDULER_POLL_INTERVAL` | `30` | Seconds between WorkflowScheduler ticks |
+| `APPROVALML_SCHEDULER_MAX_FAILURES` | `5` | Consecutive failed runs before a trigger is auto-disabled |
 | `SMTP_HOST` | _(empty)_ | SMTP server. Leave blank to print emails to stdout. |
 | `SMTP_PORT` | `587` | SMTP port |
 | `SMTP_USER` | _(empty)_ | SMTP username |
@@ -411,7 +436,6 @@ Browse ready-to-use workflow templates in the [`examples/`](./examples) folder:
 | IT | [Equipment Request](examples/it/equipment-request.yaml) |
 | Procurement | [Vendor Purchase Order](examples/procurement/vendor-purchase-order.yaml) |
 | Procurement | [Purchase Order with Signature](examples/procurement/purchase-order-with-signature.yaml) |
-| MCP Guards | [GitHub Merge Guard](examples/mcp-guards/github-merge-guard.yaml) |
 
 ## Running Tests
 

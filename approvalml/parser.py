@@ -797,6 +797,41 @@ class DataSourceConfig(BaseModel):
         return self
 
 
+class InlineConnectorConfig(BaseModel):
+    """
+    Inline connector definition for the standalone runtime's top-level
+    `sources:` registry — mirrors a `data_connectors` row in Aptiwise SaaS.
+
+    Only 'rest_api' is executable by the standalone runtime today. Promoting
+    to SaaS is a literal copy-paste of this object into a data_connectors row.
+    """
+    type: Literal["rest_api"] = "rest_api"
+    base_url: str
+    auth: Optional[dict[str, Any]] = None   # e.g. {"type": "bearer", "token": "${env.X}"}
+    headers: Optional[dict[str, str]] = None
+
+
+class InlineSourceConfig(BaseModel):
+    """
+    Inline source definition for the standalone runtime's top-level
+    `sources:` registry — mirrors a `data_sources` row in Aptiwise SaaS.
+    """
+    endpoint: str                            # appended to connector.base_url; may use ${form.x}/${env.x}
+    method: str = "GET"
+    body: Optional[dict[str, Any]] = None    # static/templated JSON body for non-GET methods
+
+
+class SourceRegistryEntry(BaseModel):
+    """
+    One entry in the top-level `sources:` registry. `DataSourceConfig.source_name`
+    resolves against this registry in the standalone runtime; on Aptiwise SaaS
+    the same `source_name` instead resolves against a DB `data_sources` row —
+    the `workflow:` section referencing it never changes between the two.
+    """
+    connector: InlineConnectorConfig
+    source: InlineSourceConfig
+
+
 class WebhookMatch(BaseModel):
     """Match configuration for wait_webhook steps"""
     field: str
@@ -1247,19 +1282,6 @@ class TriggerConfig(BaseModel):
         return self
 
 
-class GuardsConfig(BaseModel):
-    """MCP tool-classification config for approvalml's stdio wrapper (see mcp_wrap.py).
-
-    'tools' maps an fnmatch glob against an upstream MCP tool name to an action:
-    - auto: forwarded directly, no approval step
-    - gate: single-step approval gate
-    - deny: never exposed to the calling agent
-    A tool name matching no pattern falls through to this file's own workflow:
-    section (submitted under this file's own 'name') if present, else 'gate'.
-    """
-    tools: dict[str, Literal["auto", "gate", "deny"]]
-
-
 class ApprovalProcess(BaseModel):
     """Main ApprovalML workflow schema"""
     name: str
@@ -1309,10 +1331,14 @@ class ApprovalProcess(BaseModel):
     # Leave empty or omit to use default access (requestor + approvers + org managers only).
     view_all_roles: Optional[list[str]] = None
 
-    # MCP tool-classification rules for approvalml's stdio wrapper (mcp_wrap.py).
-    # Lets one workflow file double as the classifier for a wrapped MCP server —
-    # tools not matched by guards.tools escalate into this file's own workflow.
-    guards: Optional[GuardsConfig] = None
+    # Local connector/source registry for the standalone runtime — resolves
+    # `data_processor.source_name` on `automatic` steps without a database.
+    # Promoting a workflow to Aptiwise SaaS is a literal copy: `connector:`
+    # becomes a data_connectors row, `source:` becomes a data_sources row,
+    # and this block is deleted — the workflow: section itself never changes.
+    # Has no effect on Aptiwise SaaS, which resolves source_name against its
+    # own DB-managed data_sources instead.
+    sources: Optional[dict[str, SourceRegistryEntry]] = None
 
     @model_validator(mode='before')
     @classmethod

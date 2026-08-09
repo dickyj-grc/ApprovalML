@@ -16,6 +16,9 @@ API surface:
   GET  /services/v1/approvals/{id}/status   — poll gate status
   GET  /services/v1/approvals/pending       — list pending gates
   POST /services/v1/workflows               — register a workflow YAML by name (admin)
+  GET  /services/v1/workflows               — list registered workflows + trigger summary
+  GET  /services/v1/workflows/{name}/schedule — per-trigger schedule status
+  POST /services/v1/workflows/{name}/schedule/{trigger_index}/enabled — governed enable/disable (admin)
   POST /services/v1/approvals/              — submit a named workflow instance
   GET  /services/v1/approvals/{id}/workflow — get workflow instance status
   GET  /services/v1/approvals/{id}/audit-log — audit entries for one entity
@@ -45,6 +48,7 @@ from .workflow_engine import WorkflowEngine, WorkflowError
 
 # Module-level engine instance — set by start()
 _engine: Optional[Union[ApprovalEngine, WorkflowEngine]] = None
+_scheduler = None  # WorkflowScheduler | None — set in _lifespan when engine supports workflows
 
 
 def _get_engine() -> ApprovalEngine:
@@ -108,13 +112,25 @@ def _require_admin(auth: _AuthResult) -> None:
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
+    global _scheduler
     engine = _get_engine()
     await engine.store.initialize()
     if _tokens_to_seed:
         await _seed_tokens(engine)
     if _workflows_dir_at_startup and isinstance(engine, WorkflowEngine):
         await _load_workflows_from_dir(engine, _workflows_dir_at_startup)
+    if isinstance(engine, WorkflowEngine):
+        from .scheduler import WorkflowScheduler
+        _scheduler = WorkflowScheduler(
+            engine,
+            poll_interval=float(os.environ.get("APPROVALML_SCHEDULER_POLL_INTERVAL", "30")),
+            max_consecutive_failures=int(os.environ.get("APPROVALML_SCHEDULER_MAX_FAILURES", "5")),
+        )
+        _scheduler.start()
     yield
+    if _scheduler is not None:
+        await _scheduler.stop()
+        _scheduler = None
     await engine.store.close()
 
 
@@ -184,20 +200,130 @@ async def register_workflow(request: Request) -> dict[str, Any]:
 
 @app.post("/services/v1/approvals/")
 async def submit_workflow(request: Request) -> dict[str, Any]:
-    """Submit a workflow instance. Body: {workflow_id: name, form_data: {...}}."""
+    """
+    Submit a workflow instance. Body: {workflow_id: name, form_data: {...},
+    trigger_source?: "api" | "manual"}. `trigger_source` defaults to "api" —
+    the MCP `run_now` tool sets "manual" so an explicit override is always
+    distinguishable from a normal submission in the audit trail. The
+    WorkflowScheduler never calls this endpoint's default path — it tags
+    "scheduler" via engine.submit_workflow directly.
+    """
     auth = await _resolve_auth(request.headers.get("authorization"))
     body: dict[str, Any] = await request.json()
     workflow_name = str(body.get("workflow_id", "")).strip()
     form_data = body.get("form_data", {}) or {}
+    trigger_source = body.get("trigger_source") or "api"
     if not workflow_name:
         raise HTTPException(status_code=422, detail="workflow_id (workflow name) is required")
     engine = _get_workflow_engine()
     try:
         return await engine.submit_workflow(
-            workflow_name, form_data, submitter_email=auth.submitter_email
+            workflow_name, form_data, submitter_email=auth.submitter_email,
+            metadata={"trigger_source": trigger_source},
         )
     except WorkflowError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
+
+
+# ── Scheduled workflow management (governed enable/disable) ────────────────────
+
+async def _describe_workflow_triggers(name: str) -> Optional[list[dict[str, Any]]]:
+    """Parse a registered workflow's YAML and return its triggers: list, or None if not found."""
+    engine = _get_workflow_engine()
+    yaml_content = await engine.wstore.get_workflow_yaml(name)
+    if yaml_content is None:
+        return None
+    from approvalml.parser import ApprovalMLParser
+    parser = ApprovalMLParser()
+    parsed = parser.parse_yaml(yaml_content)
+    if parsed is None:
+        return []
+    return [t.model_dump() for t in (parsed.triggers or [])]
+
+
+@app.get("/services/v1/workflows")
+async def list_workflows(request: Request) -> list[dict[str, Any]]:
+    """List every registered workflow with a summary of its cron/one_time triggers."""
+    await _resolve_auth(request.headers.get("authorization"))
+    engine = _get_workflow_engine()
+    states_by_workflow: dict[str, list] = {}
+    for state in await engine.wstore.list_trigger_states():
+        states_by_workflow.setdefault(state.workflow_name, []).append(state)
+
+    result = []
+    for name in await engine.wstore.list_workflow_names():
+        triggers = await _describe_workflow_triggers(name) or []
+        states = states_by_workflow.get(name, [])
+        result.append({
+            "name": name,
+            "trigger_count": len(triggers),
+            "triggers": [
+                {
+                    "trigger_index": i,
+                    "type": t.get("type"),
+                    "schedule": t.get("schedule"),
+                    "enabled": states[i].enabled if i < len(states) else False,
+                    "next_run_at": states[i].next_run_at if i < len(states) else None,
+                }
+                for i, t in enumerate(triggers)
+            ],
+        })
+    return result
+
+
+@app.get("/services/v1/workflows/{name}/schedule")
+async def get_schedule_status(name: str, request: Request) -> dict[str, Any]:
+    """Return detailed per-trigger schedule status for one workflow."""
+    await _resolve_auth(request.headers.get("authorization"))
+    engine = _get_workflow_engine()
+    triggers = await _describe_workflow_triggers(name)
+    if triggers is None:
+        raise HTTPException(status_code=404, detail=f"Workflow '{name}' not found")
+
+    details = []
+    for i, t in enumerate(triggers):
+        state = await engine.wstore.get_trigger_state(name, i)
+        details.append({
+            "trigger_index": i,
+            "type": t.get("type"),
+            "schedule": t.get("schedule"),
+            "enabled": state.enabled if state else False,
+            "last_run_at": state.last_run_at if state else None,
+            "last_status": state.last_status if state else None,
+            "last_error": state.last_error if state else None,
+            "consecutive_failures": state.consecutive_failures if state else 0,
+            "next_run_at": state.next_run_at if state else None,
+        })
+    return {"workflow_name": name, "triggers": details}
+
+
+@app.post("/services/v1/workflows/{name}/schedule/{trigger_index}/enabled")
+async def set_schedule_enabled(name: str, trigger_index: int, request: Request) -> dict[str, Any]:
+    """
+    Governed enable/disable of one trigger. Admin only. Body: {enabled: bool,
+    reason?: str}. This only flips whether the runtime's own WorkflowScheduler
+    will fire this trigger going forward — it never fires a run itself.
+    Always written to the audit log with the calling identity and reason.
+    """
+    auth = await _resolve_auth(request.headers.get("authorization"))
+    _require_admin(auth)
+    body: dict[str, Any] = await request.json()
+    if "enabled" not in body:
+        raise HTTPException(status_code=422, detail="'enabled' (boolean) is required")
+    engine = _get_workflow_engine()
+    actor = auth.submitter_email or "admin"
+    state = await engine.wstore.set_trigger_enabled(
+        name, trigger_index, bool(body["enabled"]), actor=actor, reason=body.get("reason")
+    )
+    if state is None:
+        raise HTTPException(
+            status_code=404, detail=f"Trigger {trigger_index} not found on workflow '{name}'"
+        )
+    return {
+        "workflow_name": state.workflow_name,
+        "trigger_index": state.trigger_index,
+        "enabled": state.enabled,
+    }
 
 
 @app.get("/services/v1/approvals/{instance_id}/workflow")
