@@ -334,11 +334,16 @@ form:
   currency: "USD"              # Optional: ISO currency code (USD, EUR, JPY, etc.)
 
   # Visibility control
-  hidden: true      # invisible in the UI; value is still in form data and available to workflow logic
+  hidden: true      # always invisible in UI + PDF; value still in form data for workflow logic
+  # OR conditionally hide when a JSONata expression is truthy:
+  # hidden:
+  #   jsonata: "reason != 'other'"
   print_only: true  # shown in PDF only; hidden in the web form
 ```
 
 **`hidden: true`** — use for fields that automatic steps write into and workflow conditions read, but approvers do not need to see. Must be `type: text` or `type: textarea`.
+
+**`hidden: { jsonata: "<expr>" }`** — hide the field when the JSONata expression evaluates to a truthy value against current form data. When hidden, the field is omitted from the web form, approval page, and PDF, and `required` is not enforced. Evaluation errors fail open (field stays visible). Same shape is supported on `form.layout.sections[].hidden`.
 
 **`print_only: true`** — use for fields that should appear in the PDF document but not in the form UI. Also valid on `item_fields` inside `line_items` to add PDF-only columns such as blank note columns.
 
@@ -347,6 +352,13 @@ form:
   type: text
   label: "Weather Data"
   hidden: true
+
+- name: other_reason
+  type: textarea
+  label: Please specify
+  required: true
+  hidden:
+    jsonata: "reason != 'other'"
 ```
 
 ### Field Style Property
@@ -825,6 +837,10 @@ form:
         title: "Section Title"
         description: "Optional description shown below title"
         initial: true  # If true, this section is shown during initial submission. DEFAULT: add initial: true to EVERY section so the submitter sees the entire form up front. Only omit it from sections that are explicitly meant to be filled by approvers during workflow steps.
+        # Optional conditional visibility (same shapes as field.hidden):
+        # hidden: true
+        # hidden:
+        #   jsonata: "claim_type != 'auto'"
         grid:
           - ["field1", "field2"]  # Row with 2 fields side by side
           - ["field3"]  # Row with 1 field (full width)
@@ -966,6 +982,7 @@ workflow:
 - If a step has no `view_sections` and no `edit_sections`, all sections are displayed in view mode by default
 - The `initial: true` sections are shown when the requestor creates the workflow
 - Sections without `initial: true` are hidden from the submitter and are typically filled in during approval steps
+- Sections may also set `hidden: true` or `hidden: { jsonata: "<expr>" }` for always-on or data-driven visibility (same semantics as field `hidden`). When a section is hidden, its fields are omitted from UI/PDF and are not required.
 - **Default generation rule:** put `initial: true` on ALL sections unless the user explicitly describes a multi-stage form where specific sections belong to approvers (e.g. "IT manager fills out the equipment section"). In that case only the submitter-facing sections get `initial: true`.
 
 ### Completed View (`completed_sections`)
