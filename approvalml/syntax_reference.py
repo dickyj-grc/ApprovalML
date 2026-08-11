@@ -2554,7 +2554,7 @@ complete:
 ```
 
 **With Final Notification:**
-End nodes can optionally send a notification to the requester before terminating:
+End nodes can optionally send a custom notification to the requester before terminating:
 
 ```yaml
 approved_complete:
@@ -2563,6 +2563,18 @@ approved_complete:
   notify_requestor: "Your request has been fully approved and processed"
   metadata:
     outcome: "approved"
+```
+
+**Suppressing automatic completion emails:**
+By default, completing a workflow emails a PDF summary to the requestor and every
+approver who participated. Set `notify_completion: false` on the end step to skip
+those emails (useful for verification/intake workflows that should stay silent):
+
+```yaml
+verification_end:
+  type: end
+  notify_requestor: false
+  notify_completion: false
 ```
 
 **Benefits of Explicit End Nodes:**
@@ -2599,7 +2611,9 @@ workflow:
 **End Node Properties:**
 - `name` - Display name for the end state
 - `type: "end"` - Required
-- `notify_requestor` - Optional: Send final notification to requester
+- `notify_requestor` - Optional: string message to the requester, or `false` to skip that custom notify
+- `notify_completion` - Optional: when `false`, skip automatic completion PDF emails to requestor and all approvers (default: `true`)
+- `archive` - Optional: when `true`, soft-hide the instance from dashboards
 - `metadata` - Optional: Track outcome, reason, etc. for analytics
 
 **Note:** You can still use `end_workflow: true` for simple workflows, but explicit `type: end` nodes are preferred for better workflow structure and analytics.
@@ -3540,9 +3554,11 @@ STEP_TYPES = {
     },
     "end": {
         "required_props": [],
-        "optional_props": ["metadata", "notify_requestor", "archive"],
+        "optional_props": ["metadata", "notify_requestor", "notify_completion", "archive"],
         "description": (
             "Terminates the workflow (approved, or rejected if the step name contains 'reject'). "
+            "'notify_completion' (boolean, default true) controls the automatic completion PDF "
+            "emails to the requestor and all participating approvers — set false to suppress them. "
             "'archive' (boolean, default false) additionally hides the instance from normal "
             "dashboards/list views — e.g. a public_submission verification instance that turned out "
             "to be spam. Mirrors approval_workflows.is_deleted's soft-hide convention; archived "

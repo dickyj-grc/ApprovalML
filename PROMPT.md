@@ -929,7 +929,7 @@ complete:
 ```
 
 **With Final Notification:**
-End nodes can optionally send a notification to the requester before terminating:
+End nodes can optionally send a custom notification to the requester before terminating:
 
 ```yaml
 approved_complete:
@@ -938,6 +938,18 @@ approved_complete:
   notify_requestor: "Your request has been fully approved and processed"
   metadata:
     outcome: "approved"
+```
+
+**Suppressing automatic completion emails:**
+By default, completing a workflow emails a PDF summary to the requestor and every
+approver who participated. Set `notify_completion: false` on the end step to skip
+those emails (useful for verification/intake workflows that should stay silent):
+
+```yaml
+verification_end:
+  type: end
+  notify_requestor: false
+  notify_completion: false
 ```
 
 **Benefits of Explicit End Nodes:**
@@ -974,7 +986,9 @@ workflow:
 **End Node Properties:**
 - `name` - Display name for the end state
 - `type: "end"` - Required
-- `notify_requestor` - Optional: Send final notification to requester
+- `notify_requestor` - Optional: string message to the requester, or `false` to skip that custom notify
+- `notify_completion` - Optional: when `false`, skip automatic completion PDF emails to requestor and all approvers (default: `true`)
+- `archive` - Optional: when `true`, soft-hide the instance from dashboards
 - `metadata` - Optional: Track outcome, reason, etc. for analytics
 
 **Note:** You can still use `end_workflow: true` for simple workflows, but explicit `type: end` nodes are preferred for better workflow structure and analytics.

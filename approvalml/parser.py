@@ -919,8 +919,16 @@ class WorkflowStep(BaseModel):
     # Metadata (especially useful for end nodes to track outcome)
     metadata: Optional[dict[str, Any]] = None
 
-    # Final notification before ending (for type: end nodes)
-    notify_requestor: Optional[str] = None
+    # Final notification before ending (for type: end nodes).
+    # String message sends a custom email; false suppresses that custom notify.
+    notify_requestor: Optional[Union[str, bool]] = None
+
+    # When False on a type: end step, skip the automatic completion PDF emails
+    # to the requestor and all approvers. Defaults to True when omitted.
+    notify_completion: Optional[bool] = None
+
+    # Soft-hide the completed/rejected instance from dashboards (type: end).
+    archive: Optional[bool] = None
 
     # Digital signature requirement (for type: decision steps)
     # Value is the name of a form field with type: signature that must be filled
