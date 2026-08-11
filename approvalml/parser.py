@@ -118,6 +118,18 @@ class FieldLayoutOverride(BaseModel):
         return v
 
 
+class HiddenJsonata(BaseModel):
+    """Conditional visibility: hide when the JSONata expression is truthy."""
+    jsonata: str
+
+    @field_validator('jsonata')
+    @classmethod
+    def validate_jsonata_nonempty(cls, v: str) -> str:
+        if not isinstance(v, str) or not v.strip():
+            raise ValueError("hidden.jsonata must be a non-empty string")
+        return v
+
+
 class FormSection(BaseModel):
     """Layout section for organizing form fields.
 
@@ -133,6 +145,8 @@ class FormSection(BaseModel):
     title: str
     description: Optional[str] = None
     initial: bool = False  # Whether this section is shown on initial submission
+    # Visibility: true = never show; {jsonata: expr} = hide when expr is truthy
+    hidden: Optional[Union[bool, HiddenJsonata]] = None
     grid: Optional[list[list[str]]] = None       # Row-aligned grid layout
     columns: Optional[list[list[str]]] = None    # Independent column-stack layout
     column_widths: Optional[list[str]] = None    # CSS flex widths per column e.g. ["2fr","1fr"] or ["60%","40%"]
@@ -320,7 +334,8 @@ class FormField(BaseModel):
 
     # Calculated field support
     readonly: Optional[bool] = None
-    hidden: Optional[bool] = None       # If True, field is invisible in the UI but included in form data
+    # Visibility: true = never show (engine-only); {jsonata: expr} = hide when expr is truthy
+    hidden: Optional[Union[bool, HiddenJsonata]] = None
     print_only: Optional[bool] = None   # If True, field is shown in PDF only; hidden in the web form
     calculated: Optional[bool] = None
     formula: Optional[str] = None

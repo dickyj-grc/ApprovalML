@@ -348,6 +348,9 @@ def _workflow_to_tool(workflow_name: str, workflow: Any) -> tuple[str, dict[str,
             continue
         if field.calculated or field.readonly or field.jsonata:
             continue
+        # Permanent hidden only — conditional hidden.jsonata fields may still need input
+        if field.hidden is True:
+            continue
         properties[field_name] = _field_to_schema(field)
         if field.required:
             required.append(field_name)
