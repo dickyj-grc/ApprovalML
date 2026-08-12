@@ -955,6 +955,15 @@ class WorkflowStep(BaseModel):
     # Default: False — public token link, no login required.
     require_login: Optional[bool] = False
 
+    # When True on a type: decision step, the approver IS the requestor/submitter
+    # confirming their own submission (e.g. public_submission's self-confirmation
+    # pattern) rather than a third party reviewing someone else's request.
+    # Purely presentational: swaps the approval-request email's heading/intro/button
+    # copy from generic "Approval Required" framing to "Confirm Your Request" framing.
+    # Does not change routing, auth, or the underlying decision mechanics at all.
+    # Default: False.
+    self_confirmation: Optional[bool] = False
+
     # Field mapping for automatic steps that receive a webhook payload.
     # Keys are form field names; values are either:
     # - Simple string: JSONPath expression for scalar fields

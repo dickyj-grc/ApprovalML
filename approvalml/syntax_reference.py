@@ -1587,6 +1587,32 @@ sensitive_approval:
 
 **Default behaviour (omit or `false`):** email contains a `/public-approvals/{token}` link — approver clicks → approves/rejects directly, no login required.
 
+#### Self-Confirmation Steps (`self_confirmation`)
+Some `decision` steps aren't a third party reviewing someone else's request — the "approver" is the requestor confirming their own submission (e.g. a `public_submission` workflow's email-confirmation step, using a dynamic `approver: { email: "${form.contact_email}" }}`). Sending that person a generic "Approval Required" / "Review & Approve" email reads oddly, since they aren't reviewing anything — they're confirming it was really them.
+
+Set `self_confirmation: true` on the step to swap the notification email's heading, intro line, and button copy for "Confirm Your Request" framing instead of the default approval framing:
+
+```yaml
+confirm_email:
+  name: "Confirm Email"
+  type: "decision"
+  approver:
+    email: "${form.contact_email}"
+    name: "${form.full_name}"
+  approval_type: "needs_to_approve"
+  self_confirmation: true   # email says "Confirm Your Request", not "Approval Required"
+  timeout:
+    sla: "24h"
+    on_timeout:
+      continue_to: "reject_spam"
+  on_approve:
+    continue_to: "promote_to_request"
+  on_reject:
+    continue_to: "reject_spam"
+```
+
+This is purely presentational — it changes only the email's wording, never routing, auth, timeout behavior, or the underlying decision mechanics. Default is `false` (standard approval-request framing).
+
 #### Step SLA (`sla`)
 Set a time-based SLA target for a step using a human-readable duration string. The engine tracks whether the approver acted within the target and includes this in SLA compliance reports.
 
