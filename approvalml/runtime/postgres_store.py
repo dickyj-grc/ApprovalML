@@ -16,7 +16,10 @@ from typing import Any, Optional
 import asyncpg
 
 from ..audit_hash import compute_entry_hash, serialize_value
-from .base import ApprovalStore, ApprovalGate, WorkflowStore, WorkflowInstance, WorkflowStepRecord, UserToken
+from .base import (
+    ApprovalStore, ApprovalGate, WorkflowStore, WorkflowInstance, WorkflowStepRecord,
+    UserToken, TriggerState,
+)
 
 # Fixed entity_id for the one-time chain genesis row (see _seed_audit_genesis).
 _GENESIS_ENTITY_ID = "00000000-0000-0000-0000-000000000000"
@@ -117,6 +120,27 @@ CREATE INDEX IF NOT EXISTS idx_audit_log_entity ON audit_log (entity_type, entit
 """
 
 _AUDIT_FIELD_NAMES = ["entity_type", "entity_id", "event_type", "event_data", "actor", "created_at"]
+
+# Governed enable/disable + run-history state for one cron/one_time trigger.
+# Identity is (workflow_name, trigger_index) — the trigger's position in the
+# YAML's triggers: list, since TriggerConfig itself carries no stable id.
+# `id` exists only so trigger governance/run events can be appended to the
+# same UUID-keyed global audit_log as gates/instances/steps.
+_CREATE_TRIGGER_STATE = """
+CREATE TABLE IF NOT EXISTS trigger_state (
+    id                    UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    workflow_name         TEXT        NOT NULL REFERENCES workflow_definitions(name),
+    trigger_index         INTEGER     NOT NULL,
+    enabled               BOOLEAN     NOT NULL DEFAULT FALSE,
+    last_run_at           TIMESTAMPTZ,
+    last_status           TEXT,
+    last_error            TEXT,
+    consecutive_failures  INTEGER     NOT NULL DEFAULT 0,
+    next_run_at           TIMESTAMPTZ,
+    updated_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (workflow_name, trigger_index)
+);
+"""
 
 
 class PostgresStore(ApprovalStore):
@@ -335,6 +359,7 @@ class PostgresWorkflowStore(PostgresStore, WorkflowStore):
             await conn.execute(_CREATE_WORKFLOW_STEPS)
             await conn.execute(_CREATE_API_TOKENS)
             await conn.execute(_MIGRATE_SUBMITTER_EMAILS)
+            await conn.execute(_CREATE_TRIGGER_STATE)
 
     # ── Workflow definitions ───────────────────────────────────────────────────
 
@@ -359,6 +384,12 @@ class PostgresWorkflowStore(PostgresStore, WorkflowStore):
             )
         return row["yaml_content"] if row else None
 
+    async def list_workflow_names(self) -> list[str]:
+        pool = self._pool_or_raise()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch("SELECT name FROM workflow_definitions ORDER BY name")
+        return [r["name"] for r in rows]
+
     # ── Workflow instances ─────────────────────────────────────────────────────
 
     async def create_instance(
@@ -366,6 +397,7 @@ class PostgresWorkflowStore(PostgresStore, WorkflowStore):
         workflow_name: str,
         form_data: dict[str, Any],
         submitter_email: Optional[str] = None,
+        metadata: Optional[dict[str, Any]] = None,
     ) -> WorkflowInstance:
         inst_id = str(uuid.uuid4())
         now = datetime.now(timezone.utc)
@@ -374,13 +406,15 @@ class PostgresWorkflowStore(PostgresStore, WorkflowStore):
             async with conn.transaction():
                 await conn.execute(
                     """INSERT INTO workflow_instances
-                           (id, workflow_name, form_data, status, created_at, submitter_email)
-                       VALUES ($1, $2, $3::jsonb, 'running', $4, $5)""",
+                           (id, workflow_name, form_data, status, created_at, submitter_email, metadata)
+                       VALUES ($1, $2, $3::jsonb, 'running', $4, $5, $6::jsonb)""",
                     inst_id, workflow_name, json.dumps(form_data), now, submitter_email,
+                    json.dumps(metadata) if metadata is not None else None,
                 )
                 await self._append_audit(
                     conn, "instance", inst_id, "created",
-                    {"workflow_name": workflow_name, "submitter_email": submitter_email},
+                    {"workflow_name": workflow_name, "submitter_email": submitter_email,
+                     "trigger_source": (metadata or {}).get("trigger_source", "api")},
                 )
         return WorkflowInstance(
             id=inst_id,
@@ -390,6 +424,7 @@ class PostgresWorkflowStore(PostgresStore, WorkflowStore):
             current_step=None,
             created_at=_iso(now),
             submitter_email=submitter_email,
+            metadata=metadata,
         )
 
     async def get_instance(self, instance_id: str) -> Optional[WorkflowInstance]:
@@ -420,6 +455,131 @@ class PostgresWorkflowStore(PostgresStore, WorkflowStore):
                     conn, "instance", instance_id, "status_changed",
                     {"status": status, "current_step": current_step},
                 )
+
+    async def merge_instance_form_data(self, instance_id: str, updates: dict[str, Any]) -> None:
+        pool = self._pool_or_raise()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """UPDATE workflow_instances
+                   SET form_data = form_data || $1::jsonb
+                   WHERE id = $2""",
+                json.dumps(updates), instance_id,
+            )
+
+    async def has_running_instance_for_trigger(self, workflow_name: str, trigger_index: int) -> bool:
+        pool = self._pool_or_raise()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """SELECT 1 FROM workflow_instances
+                   WHERE workflow_name = $1 AND status = 'running'
+                     AND metadata->>'trigger_source' = 'scheduler'
+                     AND (metadata->>'trigger_index')::int = $2
+                   LIMIT 1""",
+                workflow_name, trigger_index,
+            )
+        return row is not None
+
+    # ── Scheduled trigger state (governed enable/disable) ───────────────────────
+
+    async def sync_trigger_states(self, workflow_name: str, trigger_count: int) -> None:
+        pool = self._pool_or_raise()
+        now = datetime.now(timezone.utc)
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                for i in range(trigger_count):
+                    await conn.execute(
+                        """INSERT INTO trigger_state (workflow_name, trigger_index, enabled, updated_at)
+                           VALUES ($1, $2, FALSE, $3)
+                           ON CONFLICT (workflow_name, trigger_index) DO NOTHING""",
+                        workflow_name, i, now,
+                    )
+                await conn.execute(
+                    "DELETE FROM trigger_state WHERE workflow_name = $1 AND trigger_index >= $2",
+                    workflow_name, trigger_count,
+                )
+
+    async def list_trigger_states(self) -> list[TriggerState]:
+        pool = self._pool_or_raise()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch("SELECT * FROM trigger_state ORDER BY workflow_name, trigger_index")
+        return [_row_to_trigger_state(r) for r in rows]
+
+    async def get_trigger_state(self, workflow_name: str, trigger_index: int) -> Optional[TriggerState]:
+        pool = self._pool_or_raise()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT * FROM trigger_state WHERE workflow_name = $1 AND trigger_index = $2",
+                workflow_name, trigger_index,
+            )
+        return _row_to_trigger_state(row) if row else None
+
+    async def set_trigger_enabled(
+        self,
+        workflow_name: str,
+        trigger_index: int,
+        enabled: bool,
+        actor: Optional[str] = None,
+        reason: Optional[str] = None,
+    ) -> Optional[TriggerState]:
+        pool = self._pool_or_raise()
+        now = datetime.now(timezone.utc)
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                row = await conn.fetchrow(
+                    """UPDATE trigger_state SET enabled = $1, updated_at = $2
+                       WHERE workflow_name = $3 AND trigger_index = $4
+                       RETURNING *""",
+                    enabled, now, workflow_name, trigger_index,
+                )
+                if row is None:
+                    return None
+                await self._append_audit(
+                    conn, "trigger", str(row["id"]), "enabled" if enabled else "disabled",
+                    {"workflow_name": workflow_name, "trigger_index": trigger_index, "reason": reason},
+                    actor=actor,
+                )
+        return _row_to_trigger_state(row)
+
+    async def set_trigger_next_run(
+        self, workflow_name: str, trigger_index: int, next_run_at: Optional[str]
+    ) -> None:
+        pool = self._pool_or_raise()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """UPDATE trigger_state SET next_run_at = $1, updated_at = NOW()
+                   WHERE workflow_name = $2 AND trigger_index = $3""",
+                _parse_iso(next_run_at), workflow_name, trigger_index,
+            )
+
+    async def record_trigger_run(
+        self,
+        workflow_name: str,
+        trigger_index: int,
+        *,
+        success: bool,
+        error: Optional[str],
+        next_run_at: Optional[str],
+    ) -> TriggerState:
+        pool = self._pool_or_raise()
+        now = datetime.now(timezone.utc)
+        status = "success" if success else "failed"
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                row = await conn.fetchrow(
+                    """UPDATE trigger_state
+                       SET last_run_at = $1, last_status = $2, last_error = $3, next_run_at = $4,
+                           consecutive_failures = CASE WHEN $5 THEN 0 ELSE consecutive_failures + 1 END,
+                           updated_at = $1
+                       WHERE workflow_name = $6 AND trigger_index = $7
+                       RETURNING *""",
+                    now, status, error, _parse_iso(next_run_at), success, workflow_name, trigger_index,
+                )
+                await self._append_audit(
+                    conn, "trigger", str(row["id"]), f"run_{status}",
+                    {"workflow_name": workflow_name, "trigger_index": trigger_index, "error": error},
+                    actor="scheduler",
+                )
+        return _row_to_trigger_state(row)
 
     # ── Workflow steps ─────────────────────────────────────────────────────────
 
@@ -607,6 +767,29 @@ def _row_to_step(row: asyncpg.Record) -> WorkflowStepRecord:
         decided_by=row["decided_by"],
         comment=row["comment"],
     )
+
+
+def _row_to_trigger_state(row: asyncpg.Record) -> TriggerState:
+    return TriggerState(
+        workflow_name=row["workflow_name"],
+        trigger_index=row["trigger_index"],
+        enabled=row["enabled"],
+        last_run_at=_iso(row["last_run_at"]) if row["last_run_at"] else None,
+        last_status=row["last_status"],
+        last_error=row["last_error"],
+        consecutive_failures=row["consecutive_failures"],
+        next_run_at=_iso(row["next_run_at"]) if row["next_run_at"] else None,
+        updated_at=_iso(row["updated_at"]) if row["updated_at"] else None,
+    )
+
+
+def _parse_iso(value: Optional[str]) -> Optional[datetime]:
+    if not value:
+        return None
+    dt = datetime.fromisoformat(value)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
 
 
 def _row_to_user_token(row: asyncpg.Record) -> UserToken:

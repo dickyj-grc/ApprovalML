@@ -929,7 +929,7 @@ complete:
 ```
 
 **With Final Notification:**
-End nodes can optionally send a notification to the requester before terminating:
+End nodes can optionally send a custom notification to the requester before terminating:
 
 ```yaml
 approved_complete:
@@ -938,6 +938,18 @@ approved_complete:
   notify_requestor: "Your request has been fully approved and processed"
   metadata:
     outcome: "approved"
+```
+
+**Suppressing automatic completion emails:**
+By default, completing a workflow emails a PDF summary to the requestor and every
+approver who participated. Set `notify_completion: false` on the end step to skip
+those emails (useful for verification/intake workflows that should stay silent):
+
+```yaml
+verification_end:
+  type: end
+  notify_requestor: false
+  notify_completion: false
 ```
 
 **Benefits of Explicit End Nodes:**
@@ -974,7 +986,9 @@ workflow:
 **End Node Properties:**
 - `name` - Display name for the end state
 - `type: "end"` - Required
-- `notify_requestor` - Optional: Send final notification to requester
+- `notify_requestor` - Optional: string message to the requester, or `false` to skip that custom notify
+- `notify_completion` - Optional: when `false`, skip automatic completion PDF emails to requestor and all approvers (default: `true`)
+- `archive` - Optional: when `true`, soft-hide the instance from dashboards
 - `metadata` - Optional: Track outcome, reason, etc. for analytics
 
 **Note:** You can still use `end_workflow: true` for simple workflows, but explicit `type: end` nodes are preferred for better workflow structure and analytics.
@@ -1218,57 +1232,75 @@ complex_routing:
       continue_to: "expedited_approval"
 ```
 
-## MCP Tool Guards (Optional)
+## Scheduled Triggers (Optional)
 
-`guards` is only used by approvalml's stdio MCP wrapper (`approvalml -- <upstream-command>`), which spawns an existing MCP server as a subprocess and re-exposes a gated version of its tools. It lets ONE workflow file act as both the tool classifier for that server AND the escalation workflow — no separate classification file needed.
+A workflow's top-level `triggers:` list declares a recurring or one-time run. In the standalone runtime, every trigger ships **disabled** on registration — arming one is a separate, governed act performed via the `set_schedule_enabled` MCP tool or REST endpoint, never something the YAML itself turns on.
 
 ```yaml
-name: "GitHub MCP Guard"
+name: "Daily CVE Risk Scan"
 
-guards:
-  tools:
-    "get_*": auto      # forwarded directly, no approval step
-    "list_*": auto
-    "search_*": auto
-    # any tool name not matched here falls through to this file's own
-    # workflow: below, submitted under this file's own name: ("GitHub MCP Guard")
+triggers:
+  - type: cron
+    schedule: "0 2 * * *"                # standard 5-field cron expression
+    preset_form_data:                    # standing input a scheduled run submits with
+      manifest_path: "requirements.txt"
+      severity_threshold: "critical"
+    requestor_email: "automation@company.com"   # optional — who scheduled runs are attributed to
+    allow_concurrent: false              # default; skip a tick if the previous run is still going
 
 form:
   fields:
-    - name: tool_name       # always present — the upstream tool name being called
+    - name: manifest_path
       type: "text"
-      label: "Tool"
-      readonly: true
-    - name: target_branch
-      type: "text"
-      label: "Target Branch"
-      readonly: true
-      calculated: true
-      jsonata: "$exists(arguments.base) ? arguments.base : null"   # 'arguments' holds the raw tool-call arguments
+    - name: severity_threshold
+      type: "select"
+      options: ["critical", "high", "medium"]
 
 workflow:
-  route:
-    name: "route"
-    type: "conditional_split"
-    choices:
-      - conditions: "tool_name == 'merge_pull_request'"
-        continue_to: "reviewer_approval"
-    default:
-      continue_to: "done"
-  reviewer_approval:
-    name: "reviewer_approval"
-    type: "decision"
-    approver: "reviewer"
-    on_approve: { continue_to: "done" }
-    on_reject: { end_workflow: true }
-  done:
-    name: "done"
-    type: "end"
+  # ...
 ```
 
 **Rules:**
-- `guards.tools` is a map of glob pattern (fnmatch syntax, e.g. `"get_*"`) to one of `auto` | `gate` | `deny` — never `workflow`, since falling through to this file's own `workflow:` section already is the escalation path.
-- `tool_name` is injected automatically; `arguments` (the tool call's raw arguments, as a nested object) is available to `jsonata` calculated fields — reference nested values as `arguments.<name>`.
-- `guards` has no effect on a workflow submitted normally through the UI/API — it is only consulted by the MCP wrapper's classifier.
+- `type: cron` requires `schedule` (a cron expression); `type: one_time` requires `schedule` (a datetime or cron expression); `type: webhook` must NOT have `schedule`.
+- `preset_form_data` is the standing data injected in place of a human filling the form — `form.fields` stays the schema that validates it (and drives an ad-hoc manual submission of the same workflow).
+- `requestor_email` / `requestor_company_role` set who a scheduled run is attributed to. If neither is set, the standalone runtime submits with no requestor (admin/open access).
+- `max_runs` caps total executions; omit for unlimited.
+- The runtime's own scheduler ticks triggers — never generate a workflow step, tool call, or agent loop that "fires" a trigger. Enabling a schedule is an MCP/REST management-plane action, not workflow YAML.
+
+## Sources Registry (Optional)
+
+An `automatic` step's `data_processor.source_name` can resolve against a top-level `sources:` registry instead of a database-managed connector — the standalone runtime's stand-in for a `data_connectors`/`data_sources` pair.
+
+```yaml
+sources:
+  vendor_po:
+    connector:
+      type: "rest_api"
+      base_url: "${env.VENDOR_BASE_URL}"
+      auth: { type: "bearer", token: "${env.VENDOR_TOKEN}" }
+    source:
+      endpoint: "/pos/{po_id}"
+      method: "GET"
+
+workflow:
+  match_po:
+    name: "match_po"
+    type: "automatic"
+    data_processor:
+      source_name: "vendor_po"
+      save_to: "po"
+      params:
+        - name: "po_id"
+          from_field: "field.po_number"
+    on_complete:
+      continue_to: "manager_review"
+    on_failure:
+      continue_to: "manual_review"
+```
+
+**Rules:**
+- `${env.VAR_NAME}` resolves from the process environment — the standalone runtime's equivalent of a reusable, named connector credential.
+- Only `connector.type: rest_api` is executable by the standalone runtime today.
+- `data_processor.source_id` (a database-managed source) and `api:` connector actions both require SaaS-only infrastructure and are not supported standalone — use `source_name` + `sources:` instead.
 
 This syntax reference should enable AI engines to generate valid ApprovalML workflows from natural language descriptions while ensuring proper validation against available employee roles.

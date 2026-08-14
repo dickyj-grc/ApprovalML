@@ -51,13 +51,33 @@ class WorkflowInstance:
 
 
 @dataclass
+class TriggerState:
+    """
+    Governed enable/disable + run-history state for one cron/one_time trigger
+    within a workflow's `triggers:` list. Identity is (workflow_name,
+    trigger_index) — the trigger's position in the YAML, since TriggerConfig
+    itself carries no stable id. Always created disabled (see
+    WorkflowStore.sync_trigger_states); arming it is a separate, audited act.
+    """
+    workflow_name: str
+    trigger_index: int
+    enabled: bool
+    last_run_at: Optional[str] = field(default=None)
+    last_status: Optional[str] = field(default=None)   # 'success' | 'failed' | None (never fired)
+    last_error: Optional[str] = field(default=None)
+    consecutive_failures: int = 0
+    next_run_at: Optional[str] = field(default=None)
+    updated_at: Optional[str] = field(default=None)
+
+
+@dataclass
 class WorkflowStepRecord:
     """A single step execution within a workflow instance."""
     id: str
     instance_id: str
     step_name: str
     step_type: str
-    status: str                       # pending | approved | rejected | skipped | completed
+    status: str                       # pending | approved | rejected | skipped | completed | failed
     token: str                        # secret for email decision links
     approver_email: Optional[str]
     created_at: str
@@ -121,6 +141,10 @@ class WorkflowStore(ApprovalStore):
     async def get_workflow_yaml(self, name: str) -> Optional[str]:
         """Return the stored YAML for a workflow, or None if not found."""
 
+    @abstractmethod
+    async def list_workflow_names(self) -> list[str]:
+        """Return every registered workflow name."""
+
     # ── Workflow instances ─────────────────────────────────────────────────────
 
     @abstractmethod
@@ -129,8 +153,14 @@ class WorkflowStore(ApprovalStore):
         workflow_name: str,
         form_data: dict[str, Any],
         submitter_email: Optional[str] = None,
+        metadata: Optional[dict[str, Any]] = None,
     ) -> WorkflowInstance:
-        """Create a new workflow run in 'running' state."""
+        """
+        Create a new workflow run in 'running' state. `metadata` should carry
+        `trigger_source` ('api' | 'scheduler' | 'manual') so instances created
+        by the WorkflowScheduler, an explicit run_now override, and a normal
+        submission are distinguishable in the audit trail.
+        """
 
     @abstractmethod
     async def get_instance(self, instance_id: str) -> Optional[WorkflowInstance]:
@@ -144,6 +174,84 @@ class WorkflowStore(ApprovalStore):
         current_step: Optional[str] = None,
     ) -> None:
         """Update the running status and active step name."""
+
+    @abstractmethod
+    async def merge_instance_form_data(self, instance_id: str, updates: dict[str, Any]) -> None:
+        """
+        Merge `updates` into the instance's stored form_data (e.g. an
+        `automatic` step's `save_to` result), so later steps or a resumed
+        decision see it even after the request that produced it has returned.
+        """
+
+    @abstractmethod
+    async def has_running_instance_for_trigger(self, workflow_name: str, trigger_index: int) -> bool:
+        """
+        True if a scheduler-created instance for this trigger is still
+        'running'. Used to honor TriggerConfig.allow_concurrent (default
+        False — skip a tick rather than overlap with a still-running run).
+        """
+
+    # ── Scheduled trigger state (governed enable/disable) ───────────────────────
+
+    @abstractmethod
+    async def sync_trigger_states(self, workflow_name: str, trigger_count: int) -> None:
+        """
+        Ensure exactly `trigger_count` TriggerState rows exist for this
+        workflow, each starting disabled. Called on every register_workflow
+        so a re-registered YAML's triggers are always represented, and any
+        trigger removed from the YAML has its row (and governance history)
+        removed too. Never flips an existing row's enabled state.
+        """
+
+    @abstractmethod
+    async def list_trigger_states(self) -> list[TriggerState]:
+        """Return every trigger_state row across all workflows — the scheduler's tick source."""
+
+    @abstractmethod
+    async def get_trigger_state(self, workflow_name: str, trigger_index: int) -> Optional[TriggerState]:
+        """Return one trigger's state, or None if it doesn't exist."""
+
+    @abstractmethod
+    async def set_trigger_enabled(
+        self,
+        workflow_name: str,
+        trigger_index: int,
+        enabled: bool,
+        actor: Optional[str] = None,
+        reason: Optional[str] = None,
+    ) -> Optional[TriggerState]:
+        """
+        Governed toggle — the only way a trigger's enabled bit changes short
+        of auto-disable. Always appends an audit_log entry with actor+reason.
+        Returns None if the trigger doesn't exist.
+        """
+
+    @abstractmethod
+    async def set_trigger_next_run(
+        self, workflow_name: str, trigger_index: int, next_run_at: Optional[str]
+    ) -> None:
+        """
+        Set next_run_at without touching status/failure counters — used to
+        arm a freshly enabled trigger's clock on the scheduler's first tick
+        after enable, without counting that tick as a firing.
+        """
+
+    @abstractmethod
+    async def record_trigger_run(
+        self,
+        workflow_name: str,
+        trigger_index: int,
+        *,
+        success: bool,
+        error: Optional[str],
+        next_run_at: Optional[str],
+    ) -> TriggerState:
+        """
+        Record one scheduler firing's outcome. Resets consecutive_failures to
+        0 on success; increments it on failure. Also appended to the audit
+        log — a tick that never happens (process down) is a silent absence,
+        but every tick that *does* happen, succeed or fail, is recorded here.
+        """
 
     # ── Workflow steps ─────────────────────────────────────────────────────────
 

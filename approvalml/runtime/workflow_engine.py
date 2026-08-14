@@ -2,8 +2,11 @@
 WorkflowEngine — executes full ApprovalML YAML workflows.
 
 Supported step types: decision, parallel_approval, conditional_split,
-notification, end. Unsupported types (data_processor, spawn, automatic)
-raise WorkflowError with a clear message.
+notification, end, and automatic (only when its data_processor.source_name
+resolves against the workflow's own top-level `sources:` registry — see
+_execute_automatic_step). Unsupported types (spawn, loop, wait_webhook, and
+automatic steps that need a DB-managed data source) raise WorkflowError with
+a clear message.
 
 Decision flow after a step resolves:
   - decision:           on_approve.continue_to  /  on_reject.continue_to
@@ -47,13 +50,21 @@ class WorkflowEngine(ApprovalEngine):
     # ── Public API ─────────────────────────────────────────────────────────────
 
     async def register_workflow(self, name: str, yaml_content: str) -> dict[str, Any]:
-        """Validate and store a workflow YAML. Returns {name, valid: True}."""
+        """
+        Validate and store a workflow YAML. Returns {name, valid: True}.
+
+        Any cron/one_time triggers the YAML declares are synced to
+        trigger_state — always starting disabled. Registering (or
+        re-registering) a workflow never arms its own schedule; that's a
+        separate, governed act (see set_schedule_enabled).
+        """
         from approvalml.parser import ApprovalMLParser
         parser = ApprovalMLParser()
         result = parser.parse_yaml(yaml_content)
         if result is None or parser.validation_errors:
             raise WorkflowError(f"Invalid workflow YAML: {'; '.join(parser.validation_errors)}")
         await self.wstore.upsert_workflow(name, yaml_content)
+        await self.wstore.sync_trigger_states(name, len(result.triggers or []))
         return {"name": name, "valid": True}
 
     async def submit_workflow(
@@ -61,8 +72,15 @@ class WorkflowEngine(ApprovalEngine):
         workflow_name: str,
         form_data: dict[str, Any],
         submitter_email: Optional[str] = None,
+        metadata: Optional[dict[str, Any]] = None,
     ) -> dict[str, Any]:
-        """Create a new workflow instance and advance to the first step."""
+        """
+        Create a new workflow instance and advance to the first step.
+
+        `metadata` should carry `trigger_source` ('api' by default; 'scheduler'
+        for WorkflowScheduler ticks, 'manual' for an explicit run_now override)
+        so the instance's origin is always distinguishable in the audit trail.
+        """
         yaml_content = await self.wstore.get_workflow_yaml(workflow_name)
         if yaml_content is None:
             raise WorkflowError(f"Workflow '{workflow_name}' not found")
@@ -75,8 +93,12 @@ class WorkflowEngine(ApprovalEngine):
         if not parse_result.workflow:
             raise WorkflowError(f"Workflow '{workflow_name}' has no steps")
 
-        instance = await self.wstore.create_instance(workflow_name, form_data, submitter_email)
-        await self._advance(instance, parse_result.workflow, form_data)
+        instance = await self.wstore.create_instance(
+            workflow_name, form_data, submitter_email,
+            metadata=metadata or {"trigger_source": "api"},
+        )
+        sources = {k: v.model_dump() for k, v in (parse_result.sources or {}).items()}
+        await self._advance(instance, parse_result.workflow, form_data, sources)
         return {"instance_id": instance.id, "status": "running"}
 
     async def get_instance_status(self, instance_id: str) -> Optional[dict[str, Any]]:
@@ -137,7 +159,8 @@ class WorkflowEngine(ApprovalEngine):
         if step_def is None:
             return None, f"Step definition '{step.step_name}' missing from workflow"
 
-        await self._after_decision(inst, step, step_def, parse_result.workflow, inst.form_data)
+        sources = {k: v.model_dump() for k, v in (parse_result.sources or {}).items()}
+        await self._after_decision(inst, step, step_def, parse_result.workflow, inst.form_data, sources)
         return {"step_id": step.id, "status": step.status}, None
 
     # ── Internal execution ─────────────────────────────────────────────────────
@@ -147,13 +170,14 @@ class WorkflowEngine(ApprovalEngine):
         instance: WorkflowInstance,
         workflow: dict,
         form_data: dict[str, Any],
+        sources: Optional[dict[str, Any]] = None,
     ) -> None:
         """Find and execute the first step of the workflow."""
         first_step_name = _find_entry_step(workflow)
         if first_step_name is None:
             await self.wstore.update_instance_status(instance.id, "error")
             raise WorkflowError("Could not determine workflow entry point")
-        await self._execute_step(instance, first_step_name, workflow, form_data)
+        await self._execute_step(instance, first_step_name, workflow, form_data, sources=sources)
 
     async def _execute_step(
         self,
@@ -162,6 +186,7 @@ class WorkflowEngine(ApprovalEngine):
         workflow: dict,
         form_data: dict[str, Any],
         parent_step_id: Optional[str] = None,
+        sources: Optional[dict[str, Any]] = None,
     ) -> None:
         """Execute a single step by type."""
         step_def = workflow.get(step_name)
@@ -177,16 +202,18 @@ class WorkflowEngine(ApprovalEngine):
         elif step_type == "parallel_approval":
             await self._start_parallel_step(instance, step_name, step_def, workflow, form_data)
         elif step_type == "conditional_split":
-            await self._execute_conditional_step(instance, step_name, step_def, workflow, form_data)
+            await self._execute_conditional_step(instance, step_name, step_def, workflow, form_data, sources)
         elif step_type == "notification":
-            await self._execute_notification_step(instance, step_name, step_def, workflow, form_data)
+            await self._execute_notification_step(instance, step_name, step_def, workflow, form_data, sources)
+        elif step_type == "automatic":
+            await self._execute_automatic_step(instance, step_name, step_def, workflow, form_data, sources)
         elif step_type == "end":
             await self._execute_end_step(instance, step_name, step_def)
         else:
             await self.wstore.update_instance_status(instance.id, "error")
             raise WorkflowError(
                 f"Step type '{step_type}' is not supported in the standalone runtime. "
-                "Supported types: decision, parallel_approval, conditional_split, notification, end."
+                "Supported types: decision, parallel_approval, conditional_split, notification, automatic (via sources:), end."
             )
 
     # ── decision ───────────────────────────────────────────────────────────────
@@ -260,6 +287,7 @@ class WorkflowEngine(ApprovalEngine):
         step_def: Any,
         workflow: dict,
         form_data: dict[str, Any],
+        sources: Optional[dict[str, Any]] = None,
     ) -> None:
         next_step = _evaluate_choices(step_def, form_data)
         # Record a completed step for audit trail
@@ -272,7 +300,7 @@ class WorkflowEngine(ApprovalEngine):
             comment=f"Resolved to: {next_step}",
         )
         if next_step:
-            await self._execute_step(instance, next_step, workflow, form_data)
+            await self._execute_step(instance, next_step, workflow, form_data, sources=sources)
         else:
             await self.wstore.update_instance_status(instance.id, "completed")
 
@@ -285,6 +313,7 @@ class WorkflowEngine(ApprovalEngine):
         step_def: Any,
         workflow: dict,
         form_data: dict[str, Any],
+        sources: Optional[dict[str, Any]] = None,
     ) -> None:
         recipients = _resolve_notification_recipients(step_def, form_data)
         msg = step_def.notification.message if step_def.notification else None
@@ -312,7 +341,93 @@ class WorkflowEngine(ApprovalEngine):
 
         next_step = _action_target(step_def.on_complete)
         if next_step:
-            await self._execute_step(instance, next_step, workflow, form_data)
+            await self._execute_step(instance, next_step, workflow, form_data, sources=sources)
+        else:
+            await self.wstore.update_instance_status(instance.id, "completed")
+
+    # ── automatic (data_processor via sources: registry) ─────────────────────
+
+    async def _execute_automatic_step(
+        self,
+        instance: WorkflowInstance,
+        step_name: str,
+        step_def: Any,
+        workflow: dict,
+        form_data: dict[str, Any],
+        sources: Optional[dict[str, Any]] = None,
+    ) -> None:
+        """
+        Execute a `type: automatic` step whose `data_processor.source_name`
+        resolves against this workflow's own top-level `sources:` registry.
+
+        This is the only `automatic` path the standalone runtime supports —
+        `source_id` (a DB-managed data source) and `api:` (connector actions)
+        both require SaaS-only infrastructure and are rejected with a clear
+        error, same as before this feature existed.
+        """
+        dp = step_def.data_processor
+        if dp is None or not dp.source_name or dp.source_name not in (sources or {}):
+            await self.wstore.update_instance_status(instance.id, "error")
+            raise WorkflowError(
+                f"Step '{step_name}': automatic steps are only supported in the standalone "
+                "runtime via a 'data_processor.source_name' that resolves against this "
+                "workflow's own top-level 'sources:' registry. Add a matching 'sources:' "
+                "entry, or run this workflow on Aptiwise SaaS."
+            )
+
+        entry = sources[dp.source_name]
+        connector, source = entry["connector"], entry["source"]
+
+        params: dict[str, Any] = {}
+        for p in (dp.params or []):
+            if p.from_field:
+                params[p.name] = _extract_param_field(form_data, p.from_field)
+            elif p.value is not None:
+                params[p.name] = p.value
+            # from_asset/from_asset+property require an asset store — not supported standalone.
+
+        url = _resolve_template(connector["base_url"].rstrip("/") + source["endpoint"], form_data)
+        headers = {k: _resolve_template(v, form_data) for k, v in (connector.get("headers") or {}).items()}
+        auth = connector.get("auth") or {}
+        if auth.get("type") == "bearer":
+            headers["Authorization"] = f"Bearer {_resolve_template(auth.get('token', ''), form_data)}"
+
+        import httpx
+        try:
+            async with httpx.AsyncClient(timeout=dp.timeout or 30.0) as client:
+                method = source.get("method", "GET").upper()
+                if method == "GET":
+                    resp = await client.get(url, headers=headers, params=params)
+                else:
+                    resp = await client.request(method, url, headers=headers, json=params or source.get("body"))
+                resp.raise_for_status()
+                result = resp.json()
+        except Exception as exc:
+            step_record = await self.wstore.create_step(
+                instance.id, step_name, "automatic", None,
+                metadata={"source_name": dp.source_name, "error": str(exc)},
+            )
+            await self.wstore.decide_step(step_record.id, step_record.token, "failed", comment=str(exc))
+            next_step = _action_target(step_def.on_failure)
+            if next_step:
+                await self._execute_step(instance, next_step, workflow, form_data, sources=sources)
+            else:
+                await self.wstore.update_instance_status(instance.id, "error")
+            return
+
+        if dp.save_to:
+            await self.wstore.merge_instance_form_data(instance.id, {dp.save_to: result})
+            form_data = {**form_data, dp.save_to: result}
+
+        step_record = await self.wstore.create_step(
+            instance.id, step_name, "automatic", None,
+            metadata={"source_name": dp.source_name},
+        )
+        await self.wstore.decide_step(step_record.id, step_record.token, "completed")
+
+        next_step = _action_target(step_def.on_complete)
+        if next_step:
+            await self._execute_step(instance, next_step, workflow, form_data, sources=sources)
         else:
             await self.wstore.update_instance_status(instance.id, "completed")
 
@@ -344,11 +459,12 @@ class WorkflowEngine(ApprovalEngine):
         step_def: Any,
         workflow: dict,
         form_data: dict[str, Any],
+        sources: Optional[dict[str, Any]] = None,
     ) -> None:
         """Route workflow after a decision step resolves."""
         if step.parent_step_id:
             # This is a child of a parallel_approval — check if strategy is satisfied
-            await self._check_parallel_completion(instance, step, step_def, workflow, form_data)
+            await self._check_parallel_completion(instance, step, step_def, workflow, form_data, sources)
             return
 
         # Direct decision step
@@ -358,7 +474,7 @@ class WorkflowEngine(ApprovalEngine):
             next_step = _action_target(step_def.on_reject)
 
         if next_step:
-            await self._execute_step(instance, next_step, workflow, form_data)
+            await self._execute_step(instance, next_step, workflow, form_data, sources=sources)
         else:
             final = "completed" if step.status == "approved" else "rejected"
             await self.wstore.update_instance_status(instance.id, final)
@@ -370,6 +486,7 @@ class WorkflowEngine(ApprovalEngine):
         step_def: Any,
         workflow: dict,
         form_data: dict[str, Any],
+        sources: Optional[dict[str, Any]] = None,
     ) -> None:
         """Evaluate parallel_approval strategy and advance workflow if resolved."""
         parent = await self.wstore.get_step(child_step.parent_step_id)
@@ -442,7 +559,7 @@ class WorkflowEngine(ApprovalEngine):
             next_step = _action_target(getattr(parent_step_def, "on_reject", None))
 
         if next_step:
-            await self._execute_step(instance, next_step, workflow, form_data)
+            await self._execute_step(instance, next_step, workflow, form_data, sources=sources)
         else:
             final = "completed" if outcome == "approved" else "rejected"
             await self.wstore.update_instance_status(instance.id, final)
@@ -567,16 +684,26 @@ def _resolve_role(role: str) -> list[str]:
 
 
 def _resolve_template(tmpl: str, form_data: dict[str, Any]) -> str:
-    """Replace ${form.field_name} with the value from form_data."""
+    """Replace ${form.field_name} with form_data, ${env.VAR} with the environment."""
+    import os
     import re
     def replace(m: re.Match) -> str:
         path = m.group(1)
-        parts = path.split(".")
+        parts = path.split(".", 1)
         if len(parts) == 2 and parts[0] == "form":
             val = form_data.get(parts[1])
             return str(val) if val is not None else m.group(0)
+        if len(parts) == 2 and parts[0] == "env":
+            val = os.environ.get(parts[1])
+            return val if val is not None else m.group(0)
         return m.group(0)
     return re.sub(r"\$\{([^}]+)\}", replace, tmpl)
+
+
+def _extract_param_field(form_data: dict[str, Any], from_field: str) -> Any:
+    """Resolve a DataSourceParameterMapping.from_field (e.g. 'field.department') against form_data."""
+    key = from_field.split(".", 1)[1] if from_field.startswith("field.") else from_field
+    return form_data.get(key)
 
 
 def _required_for_strategy(strategy: str, total: int) -> int:

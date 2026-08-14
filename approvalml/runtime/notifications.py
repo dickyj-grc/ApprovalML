@@ -64,7 +64,9 @@ def workflow_supports_inline_approval(workflow_definition: dict) -> bool:
             continue
         if field.get("type") in _NON_INLINE_FIELD_TYPES:
             return False
-        if field.get("hidden"):
+        hidden = field.get("hidden")
+        # Only permanently hidden fields are skipped; conditional hidden may still show.
+        if hidden is True or field.get("type") == "hidden":
             continue
         for step_def in workflow_section.values():
             if not isinstance(step_def, dict):

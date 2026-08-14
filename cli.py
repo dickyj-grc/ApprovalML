@@ -5,7 +5,7 @@ Usage:
     approvalml validate <file>
     approvalml validate <file> --verbose
     approvalml info <file>
-    approvalml mcp-server [--api-url URL] [--api-token TOKEN] [--config PATH]
+    approvalml mcp-server [--api-url URL] [--api-token TOKEN] [--workflows-dir PATH]
     approvalml serve [--port PORT] [--db-url URL] [--server-url URL]
     approvalml verify-audit [--db-url URL]
 """
@@ -132,24 +132,6 @@ def cmd_verify_audit(args):
     return 1
 
 
-def cmd_wrap(upstream_command: str, upstream_args: list):
-    """Spawn upstream_command as a stdio MCP server and re-expose a gated version of it."""
-    import asyncio
-
-    from approvalml.mcp_wrap import run_wrapped_stdio
-
-    try:
-        asyncio.run(run_wrapped_stdio(upstream_command, upstream_args))
-    except ImportError:
-        print(
-            "MCP wrap dependencies not installed.\n"
-            "Run: pip install 'approvalml[mcp]'",
-            file=sys.stderr,
-        )
-        return 1
-    return 0
-
-
 def cmd_mcp_server(args):
     """Start the ApprovalML MCP server."""
     try:
@@ -164,7 +146,7 @@ def cmd_mcp_server(args):
     start(
         api_url=args.api_url,
         api_token=args.api_token,
-        config_path=args.config,
+        workflows_dir=args.workflows_dir,
         http=args.http,
         port=args.port,
     )
@@ -172,17 +154,6 @@ def cmd_mcp_server(args):
 
 
 def main():
-    # `approvalml -- <upstream-command> <upstream-args...>` wraps a single
-    # stdio MCP server directly — bypass the normal subcommand parsing since
-    # everything after `--` belongs to the upstream command, not to us.
-    if "--" in sys.argv[1:]:
-        idx = sys.argv.index("--", 1)
-        upstream = sys.argv[idx + 1:]
-        if not upstream:
-            print("Usage: approvalml -- <upstream-command> [args...]", file=sys.stderr)
-            sys.exit(1)
-        sys.exit(cmd_wrap(upstream[0], upstream[1:]))
-
     parser = argparse.ArgumentParser(
         description="ApprovalML workflow validator and MCP server",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -221,9 +192,12 @@ def main():
     p_mcp.add_argument("--api-url", default=None, help="ApprovalML backend URL (env: APPROVALML_API_URL)")
     p_mcp.add_argument("--api-token", default=None, help="Bearer token (env: APPROVALML_API_TOKEN)")
     p_mcp.add_argument(
-        "--config",
+        "--workflows-dir",
         default=None,
-        help="Path to wrapped-servers config YAML (env: APPROVALML_CONFIG, default: approvalml-config.yaml)",
+        help=(
+            "Directory of *.yaml/*.yml workflow files to expose as MCP tools "
+            "(env: APPROVALML_WORKFLOWS_DIR) — one submit_<name> tool per file"
+        ),
     )
     p_mcp.add_argument("--http", action="store_true", help="Use HTTP transport instead of stdio")
     p_mcp.add_argument("--port", type=int, default=3100, help="HTTP port (default: 3100, requires --http)")

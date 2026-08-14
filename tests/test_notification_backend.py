@@ -66,11 +66,15 @@ class _MemoryWorkflowStore:
     async def get_workflow_yaml(self, name: str) -> Optional[str]:
         return self.workflows.get(name)
 
+    async def sync_trigger_states(self, workflow_name: str, trigger_count: int) -> None:
+        pass  # no scheduled triggers exercised by these notification-step tests
+
     async def create_instance(
         self,
         workflow_name: str,
         form_data: dict[str, Any],
         submitter_email: Optional[str] = None,
+        metadata: Optional[dict[str, Any]] = None,
     ) -> WorkflowInstance:
         self._instance_counter += 1
         inst = WorkflowInstance(
@@ -81,6 +85,7 @@ class _MemoryWorkflowStore:
             current_step=None,
             created_at="2026-01-01T00:00:00Z",
             submitter_email=submitter_email,
+            metadata=metadata,
         )
         self.instances[inst.id] = inst
         return inst

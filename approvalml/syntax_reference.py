@@ -85,7 +85,7 @@ settings:
 2. ✅ **Form Sections:** Must separate `layout.sections` from `fields`: `form: { layout: {...}, fields: [...] }`
    - ❌ **DO NOT** embed fields inside sections: `form: [{ section: { fields: [...] } }]`
 
-3. ✅ **Step Types:** Use `decision`, `parallel_approval`, `conditional_split`, `automatic`, `notification`, `end`
+3. ✅ **Step Types:** Use `decision`, `parallel_approval`, `conditional_split`, `automatic`, `notification`, `spawn`, `loop`, `end`
    - ❌ **DO NOT** use deprecated type: `approval`
 
 4. ✅ **Key Order:** Always output top-level keys in this exact canonical order:
@@ -334,11 +334,16 @@ form:
   currency: "USD"              # Optional: ISO currency code (USD, EUR, JPY, etc.)
 
   # Visibility control
-  hidden: true      # invisible in the UI; value is still in form data and available to workflow logic
+  hidden: true      # always invisible in UI + PDF; value still in form data for workflow logic
+  # OR conditionally hide when a JSONata expression is truthy:
+  # hidden:
+  #   jsonata: "reason != 'other'"
   print_only: true  # shown in PDF only; hidden in the web form
 ```
 
 **`hidden: true`** — use for fields that automatic steps write into and workflow conditions read, but approvers do not need to see. Must be `type: text` or `type: textarea`.
+
+**`hidden: { jsonata: "<expr>" }`** — hide the field when the JSONata expression evaluates to a truthy value against current form data. When hidden, the field is omitted from the web form, approval page, and PDF, and `required` is not enforced. Evaluation errors fail open (field stays visible). Same shape is supported on `form.layout.sections[].hidden`.
 
 **`print_only: true`** — use for fields that should appear in the PDF document but not in the form UI. Also valid on `item_fields` inside `line_items` to add PDF-only columns such as blank note columns.
 
@@ -347,6 +352,13 @@ form:
   type: text
   label: "Weather Data"
   hidden: true
+
+- name: other_reason
+  type: textarea
+  label: Please specify
+  required: true
+  hidden:
+    jsonata: "reason != 'other'"
 ```
 
 ### Field Style Property
@@ -567,6 +579,26 @@ Add `aggregate: sum | count | average | min | max` to a numeric `item_fields` co
 ```
 
 Without `aggregate_label`, the aggregate row is just the bare value with every other cell blank. With it, every column *before* the first `aggregate:` column is merged into one right-aligned cell showing the label, immediately followed by the actual aggregate — e.g. `| ... (merged, blank) ... | TOTAL |  Rp 34.850.000,00  |`. Has no effect if the `line_items` field has no `aggregate:` column at all. Multiple `aggregate:` columns can coexist (e.g. a `count` on one column and a `sum` on another) — each renders its own value in the same row; the label only merges columns before the *first* one.
+
+**Hiding an empty table entirely — `hide_when_empty`:**
+A `line_items` field with `min_items: 1` (or higher) always has at least one row in submitted data, because the web form auto-adds a blank placeholder row even when the user leaves the table empty. Without `hide_when_empty`, that placeholder still prints as a table of dashes plus a `0` aggregate row — e.g. an optional "Lampiran" attachment table with nothing attached. Set `hide_when_empty: true` on the field to suppress its label *and* table together whenever every row's real columns (excluding `print_only` columns) are blank or zero:
+
+```yaml
+- name: "lampiran"
+  type: "line_items"
+  label: "Lampiran"
+  hide_when_empty: true   # omit the label + table when there's no real data
+  item_fields:
+    - name: "keterangan"
+      type: "text"
+      label: "Keterangan"
+    - name: "nilai"
+      type: "currency"
+      label: "Nilai"
+      aggregate: sum
+```
+
+Defaults to `false` — existing workflows that rely on a visible zero total are unaffected.
 
 **Cross-field validation with line_items:**
 Use `required_unless` and `empty_when` to create mutually-exclusive controls such as
@@ -805,6 +837,10 @@ form:
         title: "Section Title"
         description: "Optional description shown below title"
         initial: true  # If true, this section is shown during initial submission. DEFAULT: add initial: true to EVERY section so the submitter sees the entire form up front. Only omit it from sections that are explicitly meant to be filled by approvers during workflow steps.
+        # Optional conditional visibility (same shapes as field.hidden):
+        # hidden: true
+        # hidden:
+        #   jsonata: "claim_type != 'auto'"
         grid:
           - ["field1", "field2"]  # Row with 2 fields side by side
           - ["field3"]  # Row with 1 field (full width)
@@ -946,6 +982,7 @@ workflow:
 - If a step has no `view_sections` and no `edit_sections`, all sections are displayed in view mode by default
 - The `initial: true` sections are shown when the requestor creates the workflow
 - Sections without `initial: true` are hidden from the submitter and are typically filled in during approval steps
+- Sections may also set `hidden: true` or `hidden: { jsonata: "<expr>" }` for always-on or data-driven visibility (same semantics as field `hidden`). When a section is hidden, its fields are omitted from UI/PDF and are not required.
 - **Default generation rule:** put `initial: true` on ALL sections unless the user explicitly describes a multi-stage form where specific sections belong to approvers (e.g. "IT manager fills out the equipment section"). In that case only the submitter-facing sections get `initial: true`.
 
 ### Completed View (`completed_sections`)
@@ -1472,7 +1509,7 @@ workflow:
     type: "decision"
 ```
 
-**Valid Step Types:** `decision`, `parallel_approval`, `conditional_split`, `automatic`, `notification`, `end`
+**Valid Step Types:** `decision`, `parallel_approval`, `conditional_split`, `automatic`, `notification`, `spawn`, `loop`, `end`
 **Invalid/Deprecated Type:** `approval` (use `decision` instead)
 
 ### 1. Decision Steps (`decision`)
@@ -1549,6 +1586,32 @@ sensitive_approval:
 - Internal approvals where all approvers always have accounts
 
 **Default behaviour (omit or `false`):** email contains a `/public-approvals/{token}` link — approver clicks → approves/rejects directly, no login required.
+
+#### Self-Confirmation Steps (`self_confirmation`)
+Some `decision` steps aren't a third party reviewing someone else's request — the "approver" is the requestor confirming their own submission (e.g. a `public_submission` workflow's email-confirmation step, using a dynamic `approver: { email: "${form.contact_email}" }}`). Sending that person a generic "Approval Required" / "Review & Approve" email reads oddly, since they aren't reviewing anything — they're confirming it was really them.
+
+Set `self_confirmation: true` on the step to swap the notification email's heading, intro line, and button copy for "Confirm Your Request" framing instead of the default approval framing:
+
+```yaml
+confirm_email:
+  name: "Confirm Email"
+  type: "decision"
+  approver:
+    email: "${form.contact_email}"
+    name: "${form.full_name}"
+  approval_type: "needs_to_approve"
+  self_confirmation: true   # email says "Confirm Your Request", not "Approval Required"
+  timeout:
+    sla: "24h"
+    on_timeout:
+      continue_to: "reject_spam"
+  on_approve:
+    continue_to: "promote_to_request"
+  on_reject:
+    continue_to: "reject_spam"
+```
+
+This is purely presentational — it changes only the email's wording, never routing, auth, timeout behavior, or the underlying decision mechanics. Default is `false` (standard approval-request framing).
 
 #### Step SLA (`sla`)
 Set a time-based SLA target for a step using a human-readable duration string. The engine tracks whether the approver acted within the target and includes this in SLA compliance reports.
@@ -2421,7 +2484,66 @@ In test mode (instance metadata `is_test_mode: true`), the spawn step logs what 
 - `on_complete`: Routing when fan-in threshold is met
 - `on_failure`: Routing when any child is rejected/failed (for `all` strategy)
 
-### 7. Wait Webhook Step (`wait_webhook`)
+### 7. Loop Step (`loop`)
+**For iterative sub-workflow execution.** Runs a child workflow repeatedly until a `while` condition becomes false or `max_iterations` is reached. After each completed iteration, values can be copied from the child's `request_data` back into the parent, and the condition is re-evaluated.
+
+```yaml
+refine_estimate:
+  type: "loop"
+  name: "Refine Estimate Loop"
+  workflow: "estimate-refinement"     # Child workflow name to run each iteration
+  while: "needs_refinement == 'true'" # Continuation condition evaluated against parent request_data
+  max_iterations: 10                   # Safety cap (default 20)
+  pass:                                # Parent fields copied into each child request_data
+    - "department"
+    - "budget_code"
+  map:                                 # Explicit child_field: parent_field renames
+    estimate_id: "proposal_id"
+  return:                              # Copy child results back into parent request_data
+    refined_amount: "total_amount"     # child request_data.refined_amount → parent.total_amount
+    needs_refinement: "needs_refinement"
+  on_complete:
+    continue_to: "final_approval"
+  on_failure:
+    continue_to: "escalation"
+```
+
+**Iteration Control:**
+- `while`: Condition evaluated after each child completes. While true, another iteration starts.
+- `max_iterations`: Hard cap on iterations (default `20`). When reached, the loop exits and follows `on_complete` regardless of `while`.
+
+**Field Wiring (`pass`, `map`, `return`):**
+- `pass`: List of top-level parent field names copied verbatim into each child's `request_data`.
+- `map`: Dict of `child_field: parent_field` — renames or selects specific parent fields for the child.
+- `return`: Dict of `child_field: parent_field` — copies values from the completed child's `request_data` back into the parent before the next `while` evaluation.
+
+**Routing:**
+- `on_complete`: Followed when the loop exits because `while` became false or `max_iterations` was reached after an approved child.
+- `on_failure`: Followed when a child instance is rejected. If omitted, the parent workflow is rejected.
+
+**Test Mode Behavior:**
+In test mode (`is_test_mode: true`), the loop step creates an immediately-approved coordinator and follows `on_complete` without running real child instances, so `return` values are not applied.
+
+### Lightweight `loop:` Block on Decision/Automatic Steps
+A simpler loop can be attached directly to `decision` or `automatic` steps without a separate child workflow. After the step completes, the `while` condition is evaluated; if true, the engine routes to `loop.continue_to` instead of the normal outcome routing.
+
+```yaml
+check_quality:
+  type: "decision"
+  approver: "quality_manager"
+  loop:
+    continue_to: "check_quality"       # Loop back to this same step
+    while: "quality_score < 80"
+    max_iterations: 5
+  on_approve:
+    continue_to: "finish"
+  on_reject:
+    continue_to: "rework"
+```
+
+Use this for retry/rework loops where the same step (or an earlier step) should be re-run until a condition is satisfied. Iteration counts are stored in `instance.metadata.loop_state`.
+
+### 8. Wait Webhook Step (`wait_webhook`)
 **For pausing a workflow until an external service fires.** Blocks execution at a step until an external webhook payload arrives, then optionally captures values from the payload into form fields before advancing.
 
 Typical uses: waiting for an ERP to confirm an order, a payment gateway to confirm a transaction, a CI system to report a build result, or any process that spans system boundaries.
@@ -2464,7 +2586,7 @@ wait_so_validation:
 - `timeout.sla`: SLA duration string (e.g. `"3d"`, `"4h"`)
 - `timeout.on_timeout.continue_to`: Step to route to when the SLA expires
 
-### 8. End Step (`end`)
+### 9. End Step (`end`)
 Explicit workflow termination nodes. **RECOMMENDED** for complex workflows with multiple outcomes:
 
 ```yaml
@@ -2477,7 +2599,7 @@ complete:
 ```
 
 **With Final Notification:**
-End nodes can optionally send a notification to the requester before terminating:
+End nodes can optionally send a custom notification to the requester before terminating:
 
 ```yaml
 approved_complete:
@@ -2486,6 +2608,18 @@ approved_complete:
   notify_requestor: "Your request has been fully approved and processed"
   metadata:
     outcome: "approved"
+```
+
+**Suppressing automatic completion emails:**
+By default, completing a workflow emails a PDF summary to the requestor and every
+approver who participated. Set `notify_completion: false` on the end step to skip
+those emails (useful for verification/intake workflows that should stay silent):
+
+```yaml
+verification_end:
+  type: end
+  notify_requestor: false
+  notify_completion: false
 ```
 
 **Benefits of Explicit End Nodes:**
@@ -2522,7 +2656,9 @@ workflow:
 **End Node Properties:**
 - `name` - Display name for the end state
 - `type: "end"` - Required
-- `notify_requestor` - Optional: Send final notification to requester
+- `notify_requestor` - Optional: string message to the requester, or `false` to skip that custom notify
+- `notify_completion` - Optional: when `false`, skip automatic completion PDF emails to requestor and all approvers (default: `true`)
+- `archive` - Optional: when `true`, soft-hide the instance from dashboards
 - `metadata` - Optional: Track outcome, reason, etc. for analytics
 
 **Note:** You can still use `end_workflow: true` for simple workflows, but explicit `type: end` nodes are preferred for better workflow structure and analytics.
@@ -2772,7 +2908,7 @@ When generating ApprovalML YAML, ensure:
    - ✅ Correct: `form: { layout: { sections: [...] }, fields: [...] }`
    - ❌ Wrong: `form: [{ section: { fields: [...] } }]`
 
-3. **Step Types**: Use ONLY valid step types: `decision`, `parallel_approval`, `conditional_split`, `automatic`, `notification`, `end`
+3. **Step Types**: Use ONLY valid step types: `decision`, `parallel_approval`, `conditional_split`, `automatic`, `notification`, `spawn`, `loop`, `end`
    - ❌ NEVER use: `approval` (this is deprecated)
 
 4. **Required Fields**: All steps must have `name`, `type`, and appropriate routing
@@ -3235,7 +3371,7 @@ FIELD_TYPES = {
     "line_items": {
         "requires_one_of": ["item_fields", "columns"],
         "validation": ["min_items", "max_items"],
-        "optional_props": ["header_groups", "blank_rows"],
+        "optional_props": ["header_groups", "blank_rows", "hide_when_empty"],
     },
     "autocomplete": {
         "required_props": ["options"],  # Changed: now requires options instead of data_source
@@ -3349,7 +3485,7 @@ FIELD_TYPES = {
 STEP_TYPES = {
     "decision": {
         "required_props": ["approver"],
-        "optional_props": ["approval_type", "signature_field", "require_login", "on_approve", "on_reject", "timeout", "sla", "sla_hours", "view_sections", "edit_sections"],
+        "optional_props": ["approval_type", "signature_field", "require_login", "on_approve", "on_reject", "loop", "timeout", "sla", "sla_hours", "view_sections", "edit_sections"],
         "description": (
             "A dict-style approver ({ email, name, ... }) auto-creates/reuses an external employee "
             "via a dynamic template (e.g. approver: { email: \"${form.contact_email}\" }) — any extra "
@@ -3371,7 +3507,7 @@ STEP_TYPES = {
     },
     "automatic": {
         "required_props": ["on_complete"],
-        "optional_props": ["api", "data_processor", "asset", "field_mapping", "on_failure"],
+        "optional_props": ["api", "data_processor", "asset", "field_mapping", "loop", "on_failure"],
         "requires_one_of": ["api", "data_processor", "asset", "field_mapping"],
         "field_mapping_description": (
             "Extracts and transforms values from webhook payloads or API responses into form fields. "
@@ -3438,6 +3574,17 @@ STEP_TYPES = {
             "be attributed to the real submitter."
         )
     },
+    "loop": {
+        "required_props": ["workflow", "while"],
+        "optional_props": ["max_iterations", "pass", "map", "return", "on_complete", "on_failure"],
+        "description": (
+            "Iteratively runs a child workflow until the 'while' condition becomes false or "
+            "'max_iterations' is reached. After each iteration, 'return' fields are copied from the "
+            "child's request_data back into the parent, and 'while' is re-evaluated. Reuses the same "
+            "field-wiring semantics as 'spawn': 'pass' copies parent fields into the child, 'map' "
+            "renames them, and 'return' copies child results back to the parent."
+        )
+    },
     "wait_webhook": {
         "required_props": ["source", "on_complete"],
         "optional_props": ["match", "field_mapping", "timeout", "on_failure", "on_timeout"],
@@ -3455,9 +3602,11 @@ STEP_TYPES = {
     },
     "end": {
         "required_props": [],
-        "optional_props": ["metadata", "notify_requestor", "archive"],
+        "optional_props": ["metadata", "notify_requestor", "notify_completion", "archive"],
         "description": (
             "Terminates the workflow (approved, or rejected if the step name contains 'reject'). "
+            "'notify_completion' (boolean, default true) controls the automatic completion PDF "
+            "emails to the requestor and all participating approvers — set false to suppress them. "
             "'archive' (boolean, default false) additionally hides the instance from normal "
             "dashboards/list views — e.g. a public_submission verification instance that turned out "
             "to be spam. Mirrors approval_workflows.is_deleted's soft-hide convention; archived "

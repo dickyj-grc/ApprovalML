@@ -1,14 +1,14 @@
 """
-Runtime regression tests for ApprovalML MCP server dispatch and proxy resolution.
+Runtime regression tests for ApprovalML MCP server dispatch, workflow-directory
+tool generation, and the mcp_client request shape.
 
-Tests cover: mcp_server native tool dispatch (mocked client), mcp_proxy tool
-prefixing and resolution, expression evaluator condition logic, and the mcp_client
-request shape (mocked httpx). All tests run without the SaaS backend.
+Tests cover: expression evaluator condition logic, mcp_server native + workflow-
+directory tool dispatch (mocked client), and mcp_client request shape (mocked
+httpx). All tests run without the SaaS backend and without a live Postgres.
 
 Run with: pytest tests/test_runtime.py -v
 """
 
-import json
 import types as builtin_types
 from unittest.mock import MagicMock, patch
 
@@ -24,7 +24,6 @@ def _cond(field, operator, value):
 # Expression evaluator tests
 # ---------------------------------------------------------------------------
 
-# @lat: [[open-source#Open-Source: ApprovalML Package#MCP Proxy (Wrapped-Server Passthrough)]]
 def test_condition_evaluator_greater_than():
     """ConditionEvaluator must evaluate numeric > correctly."""
     from approvalml.expression_evaluator import ConditionEvaluator, EvaluationContext
@@ -40,7 +39,6 @@ def test_condition_evaluator_greater_than():
     assert result is True
 
 
-# @lat: [[open-source#Open-Source: ApprovalML Package#MCP Proxy (Wrapped-Server Passthrough)]]
 def test_condition_evaluator_equals():
     """ConditionEvaluator must evaluate string == correctly."""
     from approvalml.expression_evaluator import ConditionEvaluator, EvaluationContext
@@ -56,7 +54,6 @@ def test_condition_evaluator_equals():
     assert result is True
 
 
-# @lat: [[open-source#Open-Source: ApprovalML Package#MCP Proxy (Wrapped-Server Passthrough)]]
 def test_condition_evaluator_false():
     """ConditionEvaluator must return False when condition is not met."""
     from approvalml.expression_evaluator import ConditionEvaluator, EvaluationContext
@@ -73,99 +70,22 @@ def test_condition_evaluator_false():
 
 
 # ---------------------------------------------------------------------------
-# mcp_proxy — WrappedServerRegistry tests
-# ---------------------------------------------------------------------------
-
-# @lat: [[open-source#Open-Source: ApprovalML Package#MCP Proxy (Wrapped-Server Passthrough)]]
-def test_registry_resolve_valid_prefix():
-    """resolve() must parse guarded__<server>__<tool> correctly."""
-    from approvalml.mcp_proxy import WrappedServer, WrappedServerRegistry
-
-    server = WrappedServer(name="filesystem", url="http://localhost:3001")
-    registry = WrappedServerRegistry([server])
-
-    result = registry.resolve("guarded__filesystem__write_file")
-    assert result is not None
-    resolved_server, tool_name = result
-    assert resolved_server.name == "filesystem"
-    assert tool_name == "write_file"
-
-
-# @lat: [[open-source#Open-Source: ApprovalML Package#MCP Proxy (Wrapped-Server Passthrough)]]
-def test_registry_resolve_unknown_server():
-    """resolve() must return None for an unknown server name."""
-    from approvalml.mcp_proxy import WrappedServerRegistry
-
-    registry = WrappedServerRegistry([])
-    assert registry.resolve("guarded__missing__some_tool") is None
-
-
-# @lat: [[open-source#Open-Source: ApprovalML Package#MCP Proxy (Wrapped-Server Passthrough)]]
-def test_registry_resolve_no_prefix():
-    """resolve() must return None for names without the guarded__ prefix."""
-    from approvalml.mcp_proxy import WrappedServer, WrappedServerRegistry
-
-    server = WrappedServer(name="filesystem", url="http://localhost:3001")
-    registry = WrappedServerRegistry([server])
-    assert registry.resolve("write_file") is None
-
-
-# @lat: [[open-source#Open-Source: ApprovalML Package#MCP Proxy (Wrapped-Server Passthrough)]]
-def test_wrapped_server_is_gated_all():
-    """WrappedServer with gate=None gates ALL tools."""
-    from approvalml.mcp_proxy import WrappedServer
-
-    server = WrappedServer(name="fs", url="http://localhost:3001", gate=None)
-    assert server.is_gated("anything") is True
-    assert server.is_gated("write_file") is True
-
-
-# @lat: [[open-source#Open-Source: ApprovalML Package#MCP Proxy (Wrapped-Server Passthrough)]]
-def test_wrapped_server_is_gated_selective():
-    """WrappedServer with gate=[...] only gates listed tools."""
-    from approvalml.mcp_proxy import WrappedServer
-
-    server = WrappedServer(name="fs", url="http://localhost:3001", gate=["write_file", "delete_file"])
-    assert server.is_gated("write_file") is True
-    assert server.is_gated("read_file") is False
-
-
-# @lat: [[open-source#Open-Source: ApprovalML Package#MCP Proxy (Wrapped-Server Passthrough)]]
-def test_list_all_tools_prefixes_name():
-    """list_all_tools() must prefix gated tool names with guarded__<server>__."""
-    from approvalml.mcp_proxy import WrappedServer, WrappedServerRegistry
-
-    mock_tools = [{"name": "write_file", "description": "Write a file"}]
-    server = WrappedServer(name="filesystem", url="http://localhost:3001", gate=["write_file"])
-
-    with patch.object(server, "list_tools", return_value=mock_tools):
-        registry = WrappedServerRegistry([server])
-        tools = registry.list_all_tools()
-
-    assert len(tools) == 1
-    assert tools[0]["name"] == "guarded__filesystem__write_file"
-    assert "Requires human approval" in tools[0]["description"]
-
-
-# ---------------------------------------------------------------------------
-# mcp_server _dispatch tests
+# mcp_server _dispatch tests — native tools
 # ---------------------------------------------------------------------------
 
 # @lat: [[open-source#Open-Source: ApprovalML Package#MCP Server]]
 def test_dispatch_request_approval():
     """_dispatch must call client.request_approval with correct args."""
     from approvalml.mcp_server import _dispatch
-    from approvalml.mcp_proxy import WrappedServerRegistry
 
     mock_client = MagicMock()
     mock_client.request_approval.return_value = {"instance_id": "abc-123", "status": "pending"}
-    proxy = WrappedServerRegistry([])
 
     result = _dispatch(
         "request_approval",
         {"description": "Deploy to prod", "approver_email": "boss@example.com"},
         mock_client,
-        proxy,
+        {},
     )
 
     mock_client.request_approval.assert_called_once_with(
@@ -180,13 +100,11 @@ def test_dispatch_request_approval():
 def test_dispatch_check_approval_status():
     """_dispatch must call client.check_approval_status with instance_id."""
     from approvalml.mcp_server import _dispatch
-    from approvalml.mcp_proxy import WrappedServerRegistry
 
     mock_client = MagicMock()
     mock_client.check_approval_status.return_value = {"status": "approved"}
-    proxy = WrappedServerRegistry([])
 
-    result = _dispatch("check_approval_status", {"instance_id": "abc-123"}, mock_client, proxy)
+    result = _dispatch("check_approval_status", {"instance_id": "abc-123"}, mock_client, {})
 
     mock_client.check_approval_status.assert_called_once_with("abc-123")
     assert result["status"] == "approved"
@@ -196,13 +114,11 @@ def test_dispatch_check_approval_status():
 def test_dispatch_list_pending():
     """_dispatch must call client.list_pending_approvals for list_pending_approvals tool."""
     from approvalml.mcp_server import _dispatch
-    from approvalml.mcp_proxy import WrappedServerRegistry
 
     mock_client = MagicMock()
     mock_client.list_pending_approvals.return_value = []
-    proxy = WrappedServerRegistry([])
 
-    result = _dispatch("list_pending_approvals", {}, mock_client, proxy)
+    result = _dispatch("list_pending_approvals", {}, mock_client, {})
     mock_client.list_pending_approvals.assert_called_once()
     assert result == []
 
@@ -211,37 +127,165 @@ def test_dispatch_list_pending():
 def test_dispatch_unknown_tool_raises():
     """_dispatch must raise ValueError for an unrecognised tool name."""
     from approvalml.mcp_server import _dispatch
-    from approvalml.mcp_proxy import WrappedServerRegistry
 
     mock_client = MagicMock()
-    proxy = WrappedServerRegistry([])
 
     with pytest.raises(ValueError, match="Unknown tool"):
-        _dispatch("nonexistent_tool", {}, mock_client, proxy)
+        _dispatch("nonexistent_tool", {}, mock_client, {})
 
 
-# @lat: [[open-source#Open-Source: ApprovalML Package#MCP Server]]
-def test_dispatch_proxied_tool_returns_pending():
-    """_dispatch for a guarded proxied tool must create an approval gate and return pending."""
+# ---------------------------------------------------------------------------
+# mcp_server _dispatch tests — scheduling management-plane tools
+# ---------------------------------------------------------------------------
+
+# @lat: [[open-source#Open-Source: ApprovalML Package#Standalone Runtime#Scheduled Workflow Execution]]
+def test_dispatch_register_workflow():
+    """_dispatch must forward register_workflow to client.register_workflow."""
     from approvalml.mcp_server import _dispatch
-    from approvalml.mcp_proxy import WrappedServer, WrappedServerRegistry
 
     mock_client = MagicMock()
-    mock_client.request_approval.return_value = {"instance_id": "gate-xyz", "status": "pending"}
-
-    server = WrappedServer(name="filesystem", url="http://localhost:3001", gate=["write_file"])
-    proxy = WrappedServerRegistry([server])
+    mock_client.register_workflow.return_value = {"name": "leave-request", "valid": True}
 
     result = _dispatch(
-        "guarded__filesystem__write_file",
-        {"path": "/etc/hosts", "content": "evil"},
-        mock_client,
-        proxy,
+        "register_workflow", {"name": "leave-request", "yaml": "name: x"}, mock_client, {}
     )
 
-    assert result["pending"] is True
-    assert result["instance_id"] == "gate-xyz"
-    assert "check_approval_status" in result["message"]
+    mock_client.register_workflow.assert_called_once_with("leave-request", "name: x")
+    assert result["valid"] is True
+
+
+# @lat: [[open-source#Open-Source: ApprovalML Package#Standalone Runtime#Scheduled Workflow Execution]]
+def test_dispatch_set_schedule_enabled():
+    """_dispatch must coerce trigger_index/enabled and forward reason."""
+    from approvalml.mcp_server import _dispatch
+
+    mock_client = MagicMock()
+    mock_client.set_schedule_enabled.return_value = {
+        "workflow_name": "cve-scan", "trigger_index": 0, "enabled": True,
+    }
+
+    result = _dispatch(
+        "set_schedule_enabled",
+        {"workflow_name": "cve-scan", "trigger_index": 0, "enabled": True, "reason": "go-live"},
+        mock_client,
+        {},
+    )
+
+    mock_client.set_schedule_enabled.assert_called_once_with("cve-scan", 0, True, "go-live")
+    assert result["enabled"] is True
+
+
+# @lat: [[open-source#Open-Source: ApprovalML Package#Standalone Runtime#Scheduled Workflow Execution]]
+def test_dispatch_run_now():
+    """_dispatch must forward run_now to client.run_now, defaulting form_data to None."""
+    from approvalml.mcp_server import _dispatch
+
+    mock_client = MagicMock()
+    mock_client.run_now.return_value = {"instance_id": "i1", "status": "running"}
+
+    result = _dispatch("run_now", {"workflow_name": "cve-scan"}, mock_client, {})
+
+    mock_client.run_now.assert_called_once_with("cve-scan", None)
+    assert result["instance_id"] == "i1"
+
+
+# ---------------------------------------------------------------------------
+# mcp_server — workflow-directory tool generation and dispatch
+# ---------------------------------------------------------------------------
+
+def _field(name, type_, required=False, options=None, **kw):
+    from approvalml.parser import FormField
+    return FormField(name=name, label=name, type=type_, required=required, options=options, **kw)
+
+
+class _FakeWorkflow:
+    def __init__(self, name, description, form):
+        self.name = name
+        self.description = description
+        self.form = form
+
+
+# @lat: [[open-source#Open-Source: ApprovalML Package#MCP Server#Expose a Workflow Directory as MCP]]
+def test_field_to_schema_select_extracts_enum():
+    """_field_to_schema must extract a static enum list from a select field's options."""
+    from approvalml.mcp_server import _field_to_schema
+
+    field = _field("severity", "select", options=["critical", "high", "medium"])
+    schema = _field_to_schema(field)
+    assert schema == {"type": "string", "enum": ["critical", "high", "medium"]}
+
+
+# @lat: [[open-source#Open-Source: ApprovalML Package#MCP Server#Expose a Workflow Directory as MCP]]
+def test_field_to_schema_number_and_email():
+    """_field_to_schema must map number/email types to the documented JSON Schema shapes."""
+    from approvalml.mcp_server import _field_to_schema
+
+    assert _field_to_schema(_field("amount", "currency")) == {"type": "number"}
+    assert _field_to_schema(_field("contact", "email")) == {"type": "string", "format": "email"}
+
+
+# @lat: [[open-source#Open-Source: ApprovalML Package#MCP Server#Expose a Workflow Directory as MCP]]
+def test_workflow_to_tool_excludes_calculated_and_hidden_fields():
+    """_workflow_to_tool must exclude calculated/readonly/hidden fields from the input schema."""
+    from approvalml.mcp_server import _workflow_to_tool
+
+    form = {
+        "amount": _field("amount", "number", required=True),
+        "internal_id": _field("internal_id", "hidden"),
+        "total": _field("total", "number", calculated=True, formula="amount * 2"),
+    }
+    workflow = _FakeWorkflow("purchase-request", "Buy stuff", form)
+
+    tool_name, info = _workflow_to_tool("purchase-request", workflow)
+
+    assert tool_name == "submit_purchase_request"
+    assert info["required"] == ["amount"]
+    assert set(info["input_schema"]["properties"].keys()) == {"amount"}
+
+
+# @lat: [[open-source#Open-Source: ApprovalML Package#MCP Server#Expose a Workflow Directory as MCP]]
+def test_dispatch_directory_tool_missing_required_field_raises():
+    """_dispatch for a directory-loaded tool must reject a call missing a required field."""
+    from approvalml.mcp_server import _dispatch
+
+    workflow_tools = {
+        "submit_leave_request": {
+            "workflow_name": "leave-request",
+            "required": ["leave_type"],
+            "description": "x",
+            "input_schema": {"type": "object", "properties": {}},
+        }
+    }
+    mock_client = MagicMock()
+
+    with pytest.raises(ValueError, match="Missing required field"):
+        _dispatch("submit_leave_request", {}, mock_client, workflow_tools)
+
+    mock_client.submit_workflow.assert_not_called()
+
+
+# @lat: [[open-source#Open-Source: ApprovalML Package#MCP Server#Expose a Workflow Directory as MCP]]
+def test_dispatch_directory_tool_submits_workflow():
+    """_dispatch for a directory-loaded tool must submit the underlying workflow by name."""
+    from approvalml.mcp_server import _dispatch
+
+    workflow_tools = {
+        "submit_leave_request": {
+            "workflow_name": "leave-request",
+            "required": ["leave_type"],
+            "description": "x",
+            "input_schema": {"type": "object", "properties": {}},
+        }
+    }
+    mock_client = MagicMock()
+    mock_client.submit_workflow.return_value = {"instance_id": "i1", "status": "running"}
+
+    result = _dispatch(
+        "submit_leave_request", {"leave_type": "vacation"}, mock_client, workflow_tools
+    )
+
+    mock_client.submit_workflow.assert_called_once_with("leave-request", {"leave_type": "vacation"})
+    assert result["instance_id"] == "i1"
 
 
 # ---------------------------------------------------------------------------
@@ -289,3 +333,184 @@ def test_client_uses_bearer_auth():
     call_kwargs = mock_http.return_value.__enter__.return_value.post.call_args
     headers = call_kwargs[1]["headers"]
     assert headers.get("Authorization") == "Bearer secret-token"
+
+
+# @lat: [[open-source#Open-Source: ApprovalML Package#Standalone Runtime#Scheduled Workflow Execution]]
+def test_client_set_schedule_enabled_posts_correct_payload():
+    """ApprovalMLClient.set_schedule_enabled must POST to the per-trigger enabled endpoint."""
+    from approvalml.mcp_client import ApprovalMLClient
+
+    client = ApprovalMLClient(api_url="http://localhost:8765", api_token="admin-token")
+
+    with patch("httpx.Client") as mock_http:
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {"workflow_name": "cve-scan", "trigger_index": 0, "enabled": True}
+        mock_resp.raise_for_status = MagicMock()
+        mock_http.return_value.__enter__.return_value.post.return_value = mock_resp
+
+        result = client.set_schedule_enabled("cve-scan", 0, True, reason="go-live")
+
+    call_args, call_kwargs = mock_http.return_value.__enter__.return_value.post.call_args
+    assert call_args[0] == "http://localhost:8765/services/v1/workflows/cve-scan/schedule/0/enabled"
+    assert call_kwargs["json"] == {"enabled": True, "reason": "go-live"}
+    assert result["enabled"] is True
+
+
+# @lat: [[open-source#Open-Source: ApprovalML Package#Standalone Runtime#Scheduled Workflow Execution]]
+def test_client_register_workflow_posts_name_and_yaml():
+    """ApprovalMLClient.register_workflow must POST {name, yaml} to /services/v1/workflows."""
+    from approvalml.mcp_client import ApprovalMLClient
+
+    client = ApprovalMLClient(api_url="http://localhost:8765", api_token="admin-token")
+
+    with patch("httpx.Client") as mock_http:
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {"name": "cve-scan", "valid": True}
+        mock_resp.raise_for_status = MagicMock()
+        mock_http.return_value.__enter__.return_value.post.return_value = mock_resp
+
+        result = client.register_workflow("cve-scan", "name: cve-scan\nworkflow: {}")
+
+    call_args, call_kwargs = mock_http.return_value.__enter__.return_value.post.call_args
+    assert call_args[0] == "http://localhost:8765/services/v1/workflows"
+    assert call_kwargs["json"] == {"name": "cve-scan", "yaml": "name: cve-scan\nworkflow: {}"}
+    assert result["valid"] is True
+
+
+# @lat: [[open-source#Open-Source: ApprovalML Package#Standalone Runtime#Scheduled Workflow Execution]]
+def test_client_list_workflows_gets_correct_url():
+    """ApprovalMLClient.list_workflows must GET /services/v1/workflows."""
+    from approvalml.mcp_client import ApprovalMLClient
+
+    client = ApprovalMLClient(api_url="http://localhost:8765", api_token="admin-token")
+
+    with patch("httpx.Client") as mock_http:
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = [{"name": "cve-scan", "trigger_count": 1, "triggers": []}]
+        mock_resp.raise_for_status = MagicMock()
+        mock_http.return_value.__enter__.return_value.get.return_value = mock_resp
+
+        result = client.list_workflows()
+
+    call_args, _ = mock_http.return_value.__enter__.return_value.get.call_args
+    assert call_args[0] == "http://localhost:8765/services/v1/workflows"
+    assert result[0]["name"] == "cve-scan"
+
+
+# @lat: [[open-source#Open-Source: ApprovalML Package#Standalone Runtime#Scheduled Workflow Execution]]
+def test_client_get_schedule_status_gets_per_workflow_url():
+    """ApprovalMLClient.get_schedule_status must GET /services/v1/workflows/{name}/schedule."""
+    from approvalml.mcp_client import ApprovalMLClient
+
+    client = ApprovalMLClient(api_url="http://localhost:8765", api_token="admin-token")
+
+    with patch("httpx.Client") as mock_http:
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {"workflow_name": "cve-scan", "triggers": []}
+        mock_resp.raise_for_status = MagicMock()
+        mock_http.return_value.__enter__.return_value.get.return_value = mock_resp
+
+        result = client.get_schedule_status("cve-scan")
+
+    call_args, _ = mock_http.return_value.__enter__.return_value.get.call_args
+    assert call_args[0] == "http://localhost:8765/services/v1/workflows/cve-scan/schedule"
+    assert result["workflow_name"] == "cve-scan"
+
+
+# @lat: [[open-source#Open-Source: ApprovalML Package#Standalone Runtime#Scheduled Workflow Execution]]
+def test_client_run_now_tags_manual_trigger_source():
+    """ApprovalMLClient.run_now must POST with trigger_source='manual', distinct from a normal submit."""
+    from approvalml.mcp_client import ApprovalMLClient
+
+    client = ApprovalMLClient(api_url="http://localhost:8765", api_token="admin-token")
+
+    with patch("httpx.Client") as mock_http:
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {"instance_id": "i1", "status": "running"}
+        mock_resp.raise_for_status = MagicMock()
+        mock_http.return_value.__enter__.return_value.post.return_value = mock_resp
+
+        result = client.run_now("cve-scan", {"severity_threshold": "high"})
+
+    call_args, call_kwargs = mock_http.return_value.__enter__.return_value.post.call_args
+    assert call_args[0] == "http://localhost:8765/services/v1/approvals/"
+    assert call_kwargs["json"] == {
+        "workflow_id": "cve-scan",
+        "form_data": {"severity_threshold": "high"},
+        "trigger_source": "manual",
+    }
+    assert result["instance_id"] == "i1"
+
+
+# ---------------------------------------------------------------------------
+# mcp_server — _load_workflow_tools against a real directory
+# ---------------------------------------------------------------------------
+
+# @lat: [[open-source#Open-Source: ApprovalML Package#MCP Server#Expose a Workflow Directory as MCP]]
+def test_load_workflow_tools_scans_directory_and_registers(tmp_path):
+    """_load_workflow_tools must parse every *.yaml file, register it, and build one tool per file."""
+    from approvalml.mcp_server import _load_workflow_tools
+
+    (tmp_path / "leave-request.yaml").write_text(
+        "name: Leave Request\n"
+        "form:\n"
+        "  leave_type:\n"
+        "    type: text\n"
+        "    label: Type\n"
+        "    required: true\n"
+        "workflow:\n"
+        "  end:\n"
+        "    name: end\n"
+        "    type: end\n"
+    )
+    (tmp_path / "not-a-workflow.txt").write_text("ignored — wrong extension")
+
+    mock_client = MagicMock()
+    tools = _load_workflow_tools(mock_client, str(tmp_path))
+
+    assert set(tools.keys()) == {"submit_leave_request"}
+    assert tools["submit_leave_request"]["workflow_name"] == "leave-request"
+    assert tools["submit_leave_request"]["required"] == ["leave_type"]
+    mock_client.register_workflow.assert_called_once()
+    call_args = mock_client.register_workflow.call_args[0]
+    assert call_args[0] == "leave-request"
+
+
+# @lat: [[open-source#Open-Source: ApprovalML Package#MCP Server#Expose a Workflow Directory as MCP]]
+def test_load_workflow_tools_skips_invalid_yaml_without_raising(tmp_path):
+    """An invalid workflow file in the directory must be skipped (logged), not crash startup."""
+    from approvalml.mcp_server import _load_workflow_tools
+
+    (tmp_path / "broken.yaml").write_text("name: Broken\n# missing required form/workflow keys\n")
+
+    mock_client = MagicMock()
+    tools = _load_workflow_tools(mock_client, str(tmp_path))
+
+    assert tools == {}
+    mock_client.register_workflow.assert_not_called()
+
+
+# @lat: [[open-source#Open-Source: ApprovalML Package#MCP Server#Expose a Workflow Directory as MCP]]
+def test_load_workflow_tools_registration_failure_does_not_drop_the_tool(tmp_path):
+    """If the runtime is unreachable at startup, the tool must still be listed (best-effort registration)."""
+    from approvalml.mcp_server import _load_workflow_tools
+
+    (tmp_path / "leave-request.yaml").write_text(
+        "name: Leave Request\n"
+        "form:\n"
+        "  leave_type:\n"
+        "    type: text\n"
+        "    label: Type\n"
+        "    required: false\n"
+        "workflow:\n"
+        "  end:\n"
+        "    name: end\n"
+        "    type: end\n"
+    )
+
+    mock_client = MagicMock()
+    mock_client.register_workflow.side_effect = ConnectionError("runtime unreachable")
+
+    tools = _load_workflow_tools(mock_client, str(tmp_path))
+
+    assert "submit_leave_request" in tools

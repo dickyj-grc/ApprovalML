@@ -95,3 +95,73 @@ class ApprovalMLClient:
             )
             resp.raise_for_status()
             return resp.json()
+
+    def register_workflow(self, name: str, yaml_content: str) -> dict[str, Any]:
+        """Register (or replace) a workflow YAML definition by name. Admin token required."""
+        with httpx.Client(timeout=self.timeout) as client:
+            resp = client.post(
+                f"{self.base_url}/services/v1/workflows",
+                json={"name": name, "yaml": yaml_content},
+                headers=self._headers(),
+            )
+            resp.raise_for_status()
+            return resp.json()
+
+    def list_workflows(self) -> list[dict[str, Any]]:
+        """Return every registered workflow with a summary of its scheduled triggers, if any."""
+        with httpx.Client(timeout=self.timeout) as client:
+            resp = client.get(f"{self.base_url}/services/v1/workflows", headers=self._headers())
+            resp.raise_for_status()
+            return resp.json()
+
+    def get_schedule_status(self, workflow_name: str) -> dict[str, Any]:
+        """Return per-trigger schedule state (enabled, next_run, last_status, failures) for one workflow."""
+        with httpx.Client(timeout=self.timeout) as client:
+            resp = client.get(
+                f"{self.base_url}/services/v1/workflows/{workflow_name}/schedule",
+                headers=self._headers(),
+            )
+            resp.raise_for_status()
+            return resp.json()
+
+    def set_schedule_enabled(
+        self,
+        workflow_name: str,
+        trigger_index: int,
+        enabled: bool,
+        reason: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """
+        Governed enable/disable of one cron/one_time trigger. Admin token required.
+
+        This is a management-plane configuration change, not a tick — the
+        WorkflowScheduler inside the runtime owns every subsequent firing.
+        Recorded to the audit log with the calling actor and reason.
+        """
+        with httpx.Client(timeout=self.timeout) as client:
+            resp = client.post(
+                f"{self.base_url}/services/v1/workflows/{workflow_name}/schedule/{trigger_index}/enabled",
+                json={"enabled": enabled, "reason": reason},
+                headers=self._headers(),
+            )
+            resp.raise_for_status()
+            return resp.json()
+
+    def run_now(self, workflow_name: str, form_data: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        """
+        Explicit, recorded manual submission of a (typically scheduled) workflow —
+        distinct from a scheduler tick. Tagged trigger_source='manual' in the
+        instance's audit trail so it's never confused with an automated run.
+        """
+        with httpx.Client(timeout=self.timeout) as client:
+            resp = client.post(
+                f"{self.base_url}/services/v1/approvals/",
+                json={
+                    "workflow_id": workflow_name,
+                    "form_data": form_data or {},
+                    "trigger_source": "manual",
+                },
+                headers=self._headers(),
+            )
+            resp.raise_for_status()
+            return resp.json()

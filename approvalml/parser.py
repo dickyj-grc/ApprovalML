@@ -41,6 +41,7 @@ class StepType(str, Enum):
     AUTOMATIC = "automatic"  # For API/connector calls only
     NOTIFICATION = "notification"  # For sending notifications
     SPAWN = "spawn"  # Fan-out: one child workflow instance per line_items row
+    LOOP = "loop"  # Iterative sub-workflow execution with condition
     WAIT_WEBHOOK = "wait_webhook"  # Pauses execution and waits for webhook
     END = "end"
 
@@ -117,6 +118,18 @@ class FieldLayoutOverride(BaseModel):
         return v
 
 
+class HiddenJsonata(BaseModel):
+    """Conditional visibility: hide when the JSONata expression is truthy."""
+    jsonata: str
+
+    @field_validator('jsonata')
+    @classmethod
+    def validate_jsonata_nonempty(cls, v: str) -> str:
+        if not isinstance(v, str) or not v.strip():
+            raise ValueError("hidden.jsonata must be a non-empty string")
+        return v
+
+
 class FormSection(BaseModel):
     """Layout section for organizing form fields.
 
@@ -132,6 +145,8 @@ class FormSection(BaseModel):
     title: str
     description: Optional[str] = None
     initial: bool = False  # Whether this section is shown on initial submission
+    # Visibility: true = never show; {jsonata: expr} = hide when expr is truthy
+    hidden: Optional[Union[bool, HiddenJsonata]] = None
     grid: Optional[list[list[str]]] = None       # Row-aligned grid layout
     columns: Optional[list[list[str]]] = None    # Independent column-stack layout
     column_widths: Optional[list[str]] = None    # CSS flex widths per column e.g. ["2fr","1fr"] or ["60%","40%"]
@@ -319,7 +334,8 @@ class FormField(BaseModel):
 
     # Calculated field support
     readonly: Optional[bool] = None
-    hidden: Optional[bool] = None       # If True, field is invisible in the UI but included in form data
+    # Visibility: true = never show (engine-only); {jsonata: expr} = hide when expr is truthy
+    hidden: Optional[Union[bool, HiddenJsonata]] = None
     print_only: Optional[bool] = None   # If True, field is shown in PDF only; hidden in the web form
     calculated: Optional[bool] = None
     formula: Optional[str] = None
@@ -649,6 +665,29 @@ class ActionConfig(BaseModel):
     custom_actions: Optional[dict[str, Any]] = None
 
 
+class LoopConfig(BaseModel):
+    """Configuration for iterative loop control on decision/automatic steps.
+
+    When a step with a `loop` block completes, the engine evaluates `while`.
+    If true and under `max_iterations`, it routes to `continue_to` instead of
+    the normal outcome routing. This enables simple feedback/retry loops without
+    requiring a separate sub-workflow file.
+    """
+    continue_to: str  # Step name to execute next on each iteration
+    while_expr: str = Field(alias='while')  # JSONata/rule-engine condition evaluated against request_data
+    max_iterations: int = Field(default=20, ge=1, le=1000)
+
+
+class SpawnLoopConfig(BaseModel):
+    """Configuration for spawn-style iterative loops (type: loop).
+
+    Reuses the same semantics as `spawn` but runs the child workflow repeatedly
+    until `while` becomes false or `max_iterations` is reached.
+    """
+    while_expr: str = Field(alias='while')  # Condition evaluated after each iteration
+    max_iterations: int = Field(default=20, ge=1, le=1000)
+
+
 class NotificationRecipient(BaseModel):
     """Recipient configuration for notifications."""
     email: Optional[str] = None      # Specific email or variable like ${instance.requester_email}
@@ -773,6 +812,41 @@ class DataSourceConfig(BaseModel):
         return self
 
 
+class InlineConnectorConfig(BaseModel):
+    """
+    Inline connector definition for the standalone runtime's top-level
+    `sources:` registry — mirrors a `data_connectors` row in Aptiwise SaaS.
+
+    Only 'rest_api' is executable by the standalone runtime today. Promoting
+    to SaaS is a literal copy-paste of this object into a data_connectors row.
+    """
+    type: Literal["rest_api"] = "rest_api"
+    base_url: str
+    auth: Optional[dict[str, Any]] = None   # e.g. {"type": "bearer", "token": "${env.X}"}
+    headers: Optional[dict[str, str]] = None
+
+
+class InlineSourceConfig(BaseModel):
+    """
+    Inline source definition for the standalone runtime's top-level
+    `sources:` registry — mirrors a `data_sources` row in Aptiwise SaaS.
+    """
+    endpoint: str                            # appended to connector.base_url; may use ${form.x}/${env.x}
+    method: str = "GET"
+    body: Optional[dict[str, Any]] = None    # static/templated JSON body for non-GET methods
+
+
+class SourceRegistryEntry(BaseModel):
+    """
+    One entry in the top-level `sources:` registry. `DataSourceConfig.source_name`
+    resolves against this registry in the standalone runtime; on Aptiwise SaaS
+    the same `source_name` instead resolves against a DB `data_sources` row —
+    the `workflow:` section referencing it never changes between the two.
+    """
+    connector: InlineConnectorConfig
+    source: InlineSourceConfig
+
+
 class WebhookMatch(BaseModel):
     """Match configuration for wait_webhook steps"""
     field: str
@@ -820,6 +894,18 @@ class WorkflowStep(BaseModel):
     source: Optional[str] = None
     match: Optional[WebhookMatch] = None
 
+    # Loop control (lightweight loop block on decision/automatic steps)
+    loop: Optional[LoopConfig] = None
+
+    # Spawn-style loop fields (for type: loop)
+    workflow: Optional[str] = None  # Child workflow name to iterate
+    items: Optional[str] = None  # Optional line_items field to iterate over (advanced)
+    while_expr: Optional[str] = Field(default=None, alias="while")  # Condition to keep iterating
+    max_iterations: Optional[int] = Field(default=None, ge=1, le=1000)
+    pass_fields: Optional[list[str]] = Field(default=None, alias="pass")
+    field_map: Optional[dict[str, str]] = Field(default=None, alias="map")
+    return_fields: Optional[dict[str, str]] = Field(default=None, alias="return")
+
     # Actions
     on_approve: Optional[ActionConfig] = None
     on_reject: Optional[ActionConfig] = None
@@ -848,8 +934,16 @@ class WorkflowStep(BaseModel):
     # Metadata (especially useful for end nodes to track outcome)
     metadata: Optional[dict[str, Any]] = None
 
-    # Final notification before ending (for type: end nodes)
-    notify_requestor: Optional[str] = None
+    # Final notification before ending (for type: end nodes).
+    # String message sends a custom email; false suppresses that custom notify.
+    notify_requestor: Optional[Union[str, bool]] = None
+
+    # When False on a type: end step, skip the automatic completion PDF emails
+    # to the requestor and all approvers. Defaults to True when omitted.
+    notify_completion: Optional[bool] = None
+
+    # Soft-hide the completed/rejected instance from dashboards (type: end).
+    archive: Optional[bool] = None
 
     # Digital signature requirement (for type: decision steps)
     # Value is the name of a form field with type: signature that must be filled
@@ -860,6 +954,15 @@ class WorkflowStep(BaseModel):
     # (sends /requests/{id} instead of a public token URL).
     # Default: False — public token link, no login required.
     require_login: Optional[bool] = False
+
+    # When True on a type: decision step, the approver IS the requestor/submitter
+    # confirming their own submission (e.g. public_submission's self-confirmation
+    # pattern) rather than a third party reviewing someone else's request.
+    # Purely presentational: swaps the approval-request email's heading/intro/button
+    # copy from generic "Approval Required" framing to "Confirm Your Request" framing.
+    # Does not change routing, auth, or the underlying decision mechanics at all.
+    # Default: False.
+    self_confirmation: Optional[bool] = False
 
     # Field mapping for automatic steps that receive a webhook payload.
     # Keys are form field names; values are either:
@@ -973,6 +1076,15 @@ class WorkflowStep(BaseModel):
                 raise ValueError("Notification steps must have 'recipients'")
             if not self.notification:
                 raise ValueError("Notification steps must have 'notification' with message")
+
+        # Loop steps must reference a child workflow and define iteration control
+        if self.type == StepType.LOOP:
+            if not self.workflow:
+                raise ValueError("Loop steps must specify 'workflow' (child workflow name)")
+            if not self.while_expr:
+                raise ValueError("Loop steps must specify 'while' (continuation condition)")
+            if self.max_iterations is None:
+                self.max_iterations = 20
 
         return self
 
@@ -1202,19 +1314,6 @@ class TriggerConfig(BaseModel):
         return self
 
 
-class GuardsConfig(BaseModel):
-    """MCP tool-classification config for approvalml's stdio wrapper (see mcp_wrap.py).
-
-    'tools' maps an fnmatch glob against an upstream MCP tool name to an action:
-    - auto: forwarded directly, no approval step
-    - gate: single-step approval gate
-    - deny: never exposed to the calling agent
-    A tool name matching no pattern falls through to this file's own workflow:
-    section (submitted under this file's own 'name') if present, else 'gate'.
-    """
-    tools: dict[str, Literal["auto", "gate", "deny"]]
-
-
 class ApprovalProcess(BaseModel):
     """Main ApprovalML workflow schema"""
     name: str
@@ -1264,10 +1363,14 @@ class ApprovalProcess(BaseModel):
     # Leave empty or omit to use default access (requestor + approvers + org managers only).
     view_all_roles: Optional[list[str]] = None
 
-    # MCP tool-classification rules for approvalml's stdio wrapper (mcp_wrap.py).
-    # Lets one workflow file double as the classifier for a wrapped MCP server —
-    # tools not matched by guards.tools escalate into this file's own workflow.
-    guards: Optional[GuardsConfig] = None
+    # Local connector/source registry for the standalone runtime — resolves
+    # `data_processor.source_name` on `automatic` steps without a database.
+    # Promoting a workflow to Aptiwise SaaS is a literal copy: `connector:`
+    # becomes a data_connectors row, `source:` becomes a data_sources row,
+    # and this block is deleted — the workflow: section itself never changes.
+    # Has no effect on Aptiwise SaaS, which resolves source_name against its
+    # own DB-managed data_sources instead.
+    sources: Optional[dict[str, SourceRegistryEntry]] = None
 
     @model_validator(mode='before')
     @classmethod
