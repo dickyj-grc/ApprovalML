@@ -2622,6 +2622,26 @@ verification_end:
   notify_completion: false
 ```
 
+**Returning the completion PDF to an external API caller:**
+A workflow submitted via the token-authenticated external-submit API (e.g. a
+service-client on-behalf-of token exchange) that completes synchronously — no
+`decision`/`parallel_approval`/`wait_webhook` step in the way — can hand its
+completion PDF straight back in that same response, instead of (or as well as)
+the async `notify_completion` email. Set `return_pdf: true` on the `end` step
+to opt in; it defaults to `false`, since rendering and returning a PDF over an
+API is a deliberate choice, not an always-on side effect:
+
+```yaml
+odoo_certificate_end:
+  type: end
+  notify_completion: false   # skip the email; the API caller gets the PDF directly
+  return_pdf: true
+```
+
+If the instance instead pauses on a human step, the external-submit response
+simply omits the PDF (nothing to render yet) — `return_pdf` only ever fires
+when this specific `end` step is actually reached.
+
 **Benefits of Explicit End Nodes:**
 - Clear workflow termination points for visualization
 - Better auditability and analytics
@@ -2658,6 +2678,7 @@ workflow:
 - `type: "end"` - Required
 - `notify_requestor` - Optional: string message to the requester, or `false` to skip that custom notify
 - `notify_completion` - Optional: when `false`, skip automatic completion PDF emails to requestor and all approvers (default: `true`)
+- `return_pdf` - Optional: when `true`, render and return the completion PDF inline to a synchronous external API caller instead of only emailing it (default: `false`)
 - `archive` - Optional: when `true`, soft-hide the instance from dashboards
 - `metadata` - Optional: Track outcome, reason, etc. for analytics
 
@@ -3602,7 +3623,7 @@ STEP_TYPES = {
     },
     "end": {
         "required_props": [],
-        "optional_props": ["metadata", "notify_requestor", "notify_completion", "archive"],
+        "optional_props": ["metadata", "notify_requestor", "notify_completion", "archive", "return_pdf"],
         "description": (
             "Terminates the workflow (approved, or rejected if the step name contains 'reject'). "
             "'notify_completion' (boolean, default true) controls the automatic completion PDF "
@@ -3611,7 +3632,10 @@ STEP_TYPES = {
             "dashboards/list views — e.g. a public_submission verification instance that turned out "
             "to be spam. Mirrors approval_workflows.is_deleted's soft-hide convention; archived "
             "instances stay in the database (full audit trail intact) but excluded from "
-            "list queries and the monthly instance-quota count."
+            "list queries and the monthly instance-quota count. 'return_pdf' (boolean, default "
+            "false) renders and returns the completion PDF inline in the response to a synchronous "
+            "external API caller (e.g. a token-exchange trigger) instead of only emailing it — only "
+            "takes effect when this exact end step is reached without pausing on a human step."
         )
     }
 }

@@ -945,6 +945,11 @@ class WorkflowStep(BaseModel):
     # Soft-hide the completed/rejected instance from dashboards (type: end).
     archive: Optional[bool] = None
 
+    # When True on a type: end step, render and return the completion PDF inline
+    # to a synchronous external caller (e.g. a token-exchange trigger) instead of
+    # only emailing it. Defaults to False — explicit opt-in only.
+    return_pdf: Optional[bool] = None
+
     # Digital signature requirement (for type: decision steps)
     # Value is the name of a form field with type: signature that must be filled
     # before the approver's action is accepted.
