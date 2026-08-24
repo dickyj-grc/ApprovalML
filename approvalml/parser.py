@@ -978,6 +978,14 @@ class WorkflowStep(BaseModel):
     #   Array:  field_mapping: { invoice_lines: { source: "$.data", item_fields: {...} } }
     field_mapping: Optional[dict[str, Union[str, dict]]] = None
 
+    # When True on a type: automatic step with data_processor/data_source, the fetch
+    # is dispatched to a background task and the step stays PENDING until the
+    # completion callback runs _continue_to_next_step — rather than fetching inline
+    # and blocking the triggering request. Meaningless (and rejected by the validator
+    # below) without data_processor/data_source: an api-only automatic step has
+    # nothing async to dispatch.
+    execute_async: Optional[bool] = None
+
     @field_validator('choices')
     @classmethod
     def validate_choices(cls, v):
@@ -1074,6 +1082,16 @@ class WorkflowStep(BaseModel):
 
             # field_mapping with data_processor is valid
             # field_mapping alone is valid (for webhook payload mapping)
+
+            # execute_async only means something when there's a data fetch to dispatch
+            # in the background — an api-only or field_mapping-only automatic step has
+            # nothing async to run, so this catches a currently-silent footgun.
+            if self.execute_async and not self.data_processor:
+                raise ValueError(
+                    "'execute_async: true' requires 'data_processor' — there is nothing "
+                    "to dispatch to a background task on an api-only or field_mapping-only "
+                    "automatic step"
+                )
 
         # Notification steps must have recipients and notification
         if self.type == StepType.NOTIFICATION:

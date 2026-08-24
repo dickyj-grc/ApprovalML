@@ -3592,7 +3592,13 @@ STEP_TYPES = {
             "'requestor_from' resolves/creates the child's requestor from a named field's value "
             "instead of inheriting the parent's requestor — use when the parent's requestor is an "
             "internal placeholder (e.g. public_submission's automation account) and the child should "
-            "be attributed to the real submitter."
+            "be attributed to the real submitter. "
+            "'workflow' can also be a dynamic reference like \"{{register_workflow_id}}\", resolved "
+            "independently per item row (e.g. from an app_registry lookup) instead of one fixed name "
+            "for the whole step — this is what lets a single spawn fan out to different apps/child "
+            "workflows per row. A row whose dynamic name doesn't resolve is skipped (logged, not an "
+            "abort of the whole spawn) and counted as a failure for fan-in purposes, so 'wait_for' "
+            "still resolves correctly rather than waiting forever on a child that was never created."
         )
     },
     "loop": {
