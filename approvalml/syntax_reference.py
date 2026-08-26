@@ -3361,8 +3361,16 @@ FIELD_TYPES = {
     },
     "select": {
         "validation": ["required"],
-        "optional_props": ["options", "data_source", "lookup"],
-        "requires_one_of": ["options", "data_source"]  # Must have either static options or data_source
+        "optional_props": ["options", "data_source", "lookup", "options_from"],
+        "requires_one_of": ["options", "data_source", "options_from"],  # static, external data_source, or asset registry
+        "options_from_description": (
+            "Populates options from this company's own asset registry (GET /assets?category=...) "
+            "instead of a hardcoded options: list or an external data_source connector — e.g. a "
+            "dropdown of actually-registered apps from app_registry. Shape: "
+            "options_from: { asset_category: \"app_registry\", value_field: \"app\" } — value_field "
+            "is the property key on each asset providing the option value/label. See "
+            "docs/spawn_provisioning.md's \"Bulk Onboarding at Scale\"."
+        )
     },
     "multiselect": {"required_props": ["options"], "validation": ["min_selections", "max_selections"]},
     "checkbox": {"validation": ["required"]},
@@ -3555,7 +3563,7 @@ STEP_TYPES = {
             "on_failure", "category", "field",
             "fields_from", "fields_to", "data_from", "data_to",
             "merge_from", "list_by_category", "bulk_upsert", "delete",
-            "schema", "schema_definition",
+            "schema", "schema_definition", "filter_field", "filter_values",
         ],
         "asset_props": {
             "required": ["asset_name"],
@@ -3570,7 +3578,12 @@ STEP_TYPES = {
             "data_from (var→asset full replace), data_to (asset→var full read), "
             "field+data_from/data_to (single-field), merge_from (partial merge). "
             "Optional schema: assigns an asset schema by name on create (or backfills NULL schema_id); "
-            "schema_definition auto-creates the named schema when missing."
+            "schema_definition auto-creates the named schema when missing. "
+            "list_by_category's optional filter_field + filter_values pair narrows the loaded list to "
+            "only the rows actually needed, instead of always loading the whole category — "
+            "filter_values is a JSONata expression evaluated against the instance's own request_data "
+            "and must be set together with filter_field (e.g. filter_field: app, "
+            "filter_values: \"access_needed.app\")."
         )
     },
     "notification": {
@@ -3579,7 +3592,7 @@ STEP_TYPES = {
     },
     "spawn": {
         "required_props": ["workflow"],
-        "optional_props": ["items", "wait_for", "pass", "map", "requestor_from", "on_complete", "on_failure"],
+        "optional_props": ["items", "wait_for", "pass", "map", "merge_from", "return_all_as", "requestor_from", "draft", "on_complete", "on_failure"],
         "description": (
             "Creates one or more child workflow instances. With 'items' (a line_items field name): "
             "fan-out, one child per row. Without 'items': single-child mode, spawning exactly one "
@@ -3589,6 +3602,16 @@ STEP_TYPES = {
             "'all' (default) — wait for every child; 'any' — advance on first approved child; "
             "'none' — fire-and-forget, parent advances immediately. "
             "Field wiring priority: explicit 'map' > named 'pass' list > auto-match by field name. "
+            "'merge_from' additionally spreads a whole object already sitting on the row (typically "
+            "captured earlier via a type: template_form step's save_to, or a prior spawn's "
+            "return_all_as) wholesale into each spawned child's form_data — for when different "
+            "resolved child workflows have different field sets the parent never needs to know by "
+            "name. 'return_all_as' captures a completed child's entire request_data as one object "
+            "into a named row field, instead of naming individual 'return' fields one by one, for "
+            "the same reason. "
+            "'draft' (boolean, default false) creates each child inert — status: draft, no steps — "
+            "instead of starting it immediately, deferring who fills in the rest outside the "
+            "workflow's own execution graph. "
             "'requestor_from' resolves/creates the child's requestor from a named field's value "
             "instead of inheriting the parent's requestor — use when the parent's requestor is an "
             "internal placeholder (e.g. public_submission's automation account) and the child should "
@@ -3599,6 +3622,22 @@ STEP_TYPES = {
             "workflows per row. A row whose dynamic name doesn't resolve is skipped (logged, not an "
             "abort of the whole spawn) and counted as a failure for fan-in purposes, so 'wait_for' "
             "still resolves correctly rather than waiting forever on a child that was never created."
+        )
+    },
+    "template_form": {
+        "required_props": ["workflow", "items", "save_to"],
+        "optional_props": ["on_complete"],
+        "description": (
+            "Resolves 'workflow' independently per row of 'items' (the same dynamic {{field}} "
+            "resolution 'spawn' uses), reads that workflow's form.fields filtered to non-readonly "
+            "fields, and pauses the parent on this step until the submitter fills them in — WITHOUT "
+            "ever creating a child ApprovalInstance for any row. There is nothing to execute, so "
+            "there is nothing to accidentally trigger (no data_processor/asset steps run for any "
+            "resolved workflow). Captured values are written directly onto each row via 'save_to'. "
+            "Used for self-service value capture across rows with different, dynamically-resolved "
+            "schemas (e.g. proposing a role per app before a single consolidated approval), where "
+            "creating a real instance per row would be unnecessary overhead — see "
+            "docs/spawn_provisioning.md's \"Bulk Onboarding at Scale\"."
         )
     },
     "loop": {

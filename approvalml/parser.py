@@ -42,6 +42,7 @@ class StepType(str, Enum):
     NOTIFICATION = "notification"  # For sending notifications
     SPAWN = "spawn"  # Fan-out: one child workflow instance per line_items row
     LOOP = "loop"  # Iterative sub-workflow execution with condition
+    TEMPLATE_FORM = "template_form"  # Resolves a workflow's schema per row, no child instance created
     WAIT_WEBHOOK = "wait_webhook"  # Pauses execution and waits for webhook
     END = "end"
 
@@ -307,6 +308,15 @@ class OptionsConfig(BaseModel):
         return self
 
 
+class OptionsFromAssetCategory(BaseModel):
+    """Populates a select field's options from this company's own asset registry
+    (GET /assets?category=...), instead of a hardcoded options: list or an external
+    data_source connector. See docs/spawn_provisioning.md's "Bulk Onboarding at Scale"
+    for the motivating case: a dropdown of actually-registered apps from app_registry."""
+    asset_category: str   # e.g. "app_registry"
+    value_field: str      # property key on each asset providing the option value/label
+
+
 class HeaderGroup(BaseModel):
     """A merged column-header group for line_items tables in PDF export."""
     label: str = ""                    # Group header text; empty string renders a blank merged cell
@@ -355,6 +365,11 @@ class FormField(BaseModel):
     # Static: options: [{"value": "a", "label": "A"}, ...]
     # Dynamic: options: { data_source: { source_id: "...", ... } }
     options: Optional[Union[list[Union[str, dict[str, str]]], OptionsConfig]] = None
+
+    # Populates options from this company's own asset registry (e.g. app_registry)
+    # instead of a hardcoded list — see OptionsFromAssetCategory. Mutually exclusive
+    # with options: in practice, though not enforced here (frontend/validator concern).
+    options_from: Optional[OptionsFromAssetCategory] = None
 
     # Search UI behavior (for autocomplete only)
     search: Optional[SearchConfig] = None
