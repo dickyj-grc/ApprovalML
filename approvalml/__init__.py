@@ -14,8 +14,12 @@ Quick start:
 from .parser import (
     ApprovalMLParser,
     ApprovalProcess,
+    Dashboard,
+    DashboardParser,
     parse_approvalml,
     parse_approvalml_file,
+    parse_dashboard_file,
+    parse_dashboard_yaml,
     safe_load_workflow_yaml,
 )
 
@@ -24,7 +28,11 @@ __version__ = "0.1.0"
 __all__ = [
     "ApprovalMLParser",
     "ApprovalProcess",
+    "Dashboard",
+    "DashboardParser",
     "parse_approvalml",
     "parse_approvalml_file",
+    "parse_dashboard_file",
+    "parse_dashboard_yaml",
     "safe_load_workflow_yaml",
 ]

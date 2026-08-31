@@ -739,15 +739,23 @@ class DataSourceParameterMapping(BaseModel):
     from_asset: Optional[str] = None   # Read from asset.properties by asset name
     property: Optional[str] = None     # Key or JSONPath ($.path) into asset.properties when from_asset is set
     value: Optional[Any] = None        # Or provide a static value
+    from_control: Optional[str] = None  # Dashboard-only: name of a Dashboard control to read the value from.
+                                        # Workflows have no control_values at runtime — the workflow YAML validator
+                                        # (yaml_validator.py) rejects this variant there; only the parser allows it
+                                        # generically since this model is shared between workflow steps and tiles.
 
     @model_validator(mode='after')
     def validate_has_source(self):
         """Ensure exactly one source is provided"""
-        sources = [s for s in (self.from_field, self.from_asset, self.value) if s is not None]
+        sources = [s for s in (self.from_field, self.from_asset, self.value, self.from_control) if s is not None]
         if len(sources) == 0:
-            raise ValueError(f"Parameter '{self.name}' must have one of: 'from_field', 'from_asset', or 'value'")
+            raise ValueError(
+                f"Parameter '{self.name}' must have one of: 'from_field', 'from_asset', 'from_control', or 'value'"
+            )
         if len(sources) > 1:
-            raise ValueError(f"Parameter '{self.name}' must have only one of: 'from_field', 'from_asset', or 'value'")
+            raise ValueError(
+                f"Parameter '{self.name}' must have only one of: 'from_field', 'from_asset', 'from_control', or 'value'"
+            )
         return self
 
 
@@ -768,9 +776,12 @@ class DataSourceJoin(BaseModel):
         # `as` not needed when pick is a dict
     """
     field: str                                          # field on each row containing the ID(s)
+    source_type: Literal["data_source", "asset"] = "data_source"  # NEW — which kind of second source to fetch
     source_id: Optional[str] = None                     # stable unique ID of connector source (preferred)
     source_name: Optional[str] = None                   # human-readable name — portable across companies
-    on: str = 'id'                                      # key field in join records (default: "id")
+    category: Optional[str] = None                      # NEW — narrows the asset candidate set when source_type is asset;
+                                                         # ignored (and irrelevant) for source_type: data_source
+    on: str = 'id'                                      # key field in join records (default: "id"; assets use "name")
     pick: Union[str, dict[str, str]] = 'name'           # single field name OR {output: source} mapping
     as_field: Optional[str] = Field(default=None, alias='as')  # output field; required when pick is a string
     param: str = 'ids'                                  # parameter name sent to join source (default: "ids")
@@ -781,9 +792,17 @@ class DataSourceJoin(BaseModel):
 
     @model_validator(mode='after')
     def validate_source_specification(self):
-        """Either source_id or source_name must be provided."""
-        if not self.source_id and not self.source_name:
-            raise ValueError("DataSourceJoin requires 'source_id' or 'source_name'")
+        """source_id/source_name are required for a data_source join; for an asset join they must be
+        absent — assets are matched by category (optional) + name instead, with no separate source lookup."""
+        if self.source_type == "asset":
+            if self.source_id or self.source_name:
+                raise ValueError(
+                    "DataSourceJoin with source_type 'asset' must not specify 'source_id'/'source_name' — "
+                    "use 'category' instead"
+                )
+        else:
+            if not self.source_id and not self.source_name:
+                raise ValueError("DataSourceJoin requires 'source_id' or 'source_name'")
         return self
 
     @model_validator(mode='after')
@@ -1354,6 +1373,9 @@ class TriggerConfig(BaseModel):
 
 class ApprovalProcess(BaseModel):
     """Main ApprovalML workflow schema"""
+    # Discriminates this document from a `kind: dashboard` document sharing the same package/parser.
+    # Absent on nearly all existing workflow YAML today, so it defaults to "workflow" rather than being required.
+    kind: Literal["workflow"] = "workflow"
     name: str
     description: Optional[str] = None
     version: str = "1.0"
@@ -1537,6 +1559,302 @@ class ApprovalProcess(BaseModel):
                         )
 
         return self
+
+
+# ---------------------------------------------------------------------------
+# Dashboards — independent top-level document kind, sharing DataSourceConfig/
+# DataSourceParameterMapping/DataSourceJoin/FormSection/FormLayout with
+# workflows above, but otherwise a completely separate schema and parse path.
+# See lat.md/dashboards.md for the full design and reuse rationale.
+# ---------------------------------------------------------------------------
+
+# Preset keys date_range_preset controls may offer; resolved server-side into
+# `{name}_from`/`{name}_to` control_values by the execution service.
+DASHBOARD_DATE_RANGE_PRESETS = frozenset({
+    "last_7_days",
+    "last_30_days",
+    "this_month",
+    "last_month",
+    "this_quarter",
+    "last_quarter",
+    "this_year",
+})
+
+
+class DashboardControlOption(BaseModel):
+    """One static option for a select/multi_select/date_range_preset dashboard control."""
+    label: str
+    value: Any
+
+
+class DashboardControl(BaseModel):
+    """A dashboard-level filter widget whose resolved value(s) feed tile params via from_control.
+
+    Structural shape only — requiredness of 'options' per type and the known date_range_preset
+    key set are enforced by the dashboard YAML validator, not here (mirrors the stat template
+    two-phase validation pattern: parser defines shape, yaml_validator.py enforces business rules).
+    """
+    name: str
+    type: Literal["date", "select", "multi_select", "date_range_preset"]
+    options: Optional[list[DashboardControlOption]] = None
+
+
+class DashboardAssetSource(BaseModel):
+    """Native asset-registry source for a tile — replaces data_processor entirely.
+
+    No row_path: the underlying query (list_by_category-equivalent, viewer-scoped) already
+    returns [{name, properties}], so there is nothing for JSONata array-extraction to do.
+    """
+    type: Literal["asset"] = "asset"
+    category: str
+
+
+class DashboardTileColumn(BaseModel):
+    """One column of a `table` tile — label is display text, path is a per-row JSONata expression."""
+    label: str
+    path: str
+
+
+class LineChartSeries(BaseModel):
+    """One line of a `line_chart` tile — path is a per-row JSONata expression sharing the tile's x."""
+    label: str
+    path: str
+
+
+class ScatterQuadrantLabels(BaseModel):
+    """Region labels for a scatter tile's quadrant overlay, relative to x_threshold/y_threshold."""
+    high_high: Optional[str] = None
+    high_x_low_y: Optional[str] = None
+    low_x_high_y: Optional[str] = None
+    low_low: Optional[str] = None
+
+
+class ScatterQuadrants(BaseModel):
+    """Optional threshold lines + region labels overlaid on a scatter tile."""
+    x_threshold: Optional[float] = None
+    y_threshold: Optional[float] = None
+    labels: Optional[ScatterQuadrantLabels] = None
+
+
+class DashboardTile(BaseModel):
+    """A single dashboard tile. One flat model discriminated by `type`, mirroring WorkflowStep's
+    existing style in this file rather than a Pydantic discriminated union — each type only uses
+    a subset of the optional fields below, enforced by validate_type_specific_fields.
+    """
+    id: str
+    type: Literal["table", "stat", "bar_chart", "scatter", "line_chart"]
+    label: Optional[str] = None  # Tile display title
+
+    # Exactly one of these two is required — see validate_source_specification
+    data_processor: Optional[DataSourceConfig] = None
+    source: Optional[DashboardAssetSource] = None
+
+    row_path: Optional[str] = None  # JSONata — which array in the response is "the rows"; unused for source: asset
+    filter: Optional[str] = None    # JSONata predicate over the whole rows array; valid on every tile type
+
+    # table
+    columns: Optional[list[DashboardTileColumn]] = None
+
+    # stat — DashboardTile itself does not know about metric/compare_metric/format at all; those live
+    # entirely in the resolved template's own settings_schema() (see src/app/services/stat_templates/)
+    template: Optional[str] = None
+    settings: Optional[dict[str, Any]] = None
+
+    # bar_chart (x/y also reused by scatter and line_chart below)
+    x: Optional[str] = None
+    y: Optional[str] = None
+    agg: Optional[Literal["sum", "avg", "count", "min", "max"]] = None  # shorthand; only valid when y/metric is a plain field
+
+    # scatter
+    size: Optional[str] = None          # bubble radius source, per-row JSONata
+    point_label: Optional[str] = None   # optional per-point tooltip field, per-row JSONata
+    quadrants: Optional[ScatterQuadrants] = None
+
+    # line_chart
+    series: Optional[list[LineChartSeries]] = None
+
+    @model_validator(mode='after')
+    def validate_source_specification(self):
+        """Exactly one of data_processor or source, not both, not neither."""
+        has_processor = self.data_processor is not None
+        has_source = self.source is not None
+        if has_processor == has_source:
+            raise ValueError(
+                f"Tile '{self.id}' must specify exactly one of 'data_processor' or 'source', "
+                f"not {'both' if has_processor else 'neither'}"
+            )
+        return self
+
+    @model_validator(mode='after')
+    def validate_type_specific_fields(self):
+        """Structural per-type requiredness — mirrors FormSection/FormFooter's existing pattern in
+        this file. JSONata syntax-checking of these same fields happens in the yaml_validator, not here."""
+        if self.type == "table" and not self.columns:
+            raise ValueError(f"Tile '{self.id}' of type 'table' requires non-empty 'columns'")
+        elif self.type == "stat" and not self.template:
+            raise ValueError(f"Tile '{self.id}' of type 'stat' requires 'template'")
+        elif self.type == "bar_chart" and (not self.x or not self.y):
+            raise ValueError(f"Tile '{self.id}' of type 'bar_chart' requires 'x' and 'y'")
+        elif self.type == "scatter" and (not self.x or not self.y):
+            raise ValueError(f"Tile '{self.id}' of type 'scatter' requires 'x' and 'y'")
+        elif self.type == "line_chart":
+            if not self.x:
+                raise ValueError(f"Tile '{self.id}' of type 'line_chart' requires 'x'")
+            if not self.series:
+                raise ValueError(f"Tile '{self.id}' of type 'line_chart' requires at least one 'series' entry")
+        return self
+
+
+class DashboardSubscriptionRecipient(BaseModel):
+    """Same recipient shape as workflow notification steps, minus form_data template interpolation."""
+    role: Optional[str] = None
+    email: Optional[str] = None
+
+    @model_validator(mode='after')
+    def validate_has_target(self):
+        if not self.role and not self.email:
+            raise ValueError("Subscription recipient requires 'role' or 'email'")
+        return self
+
+
+class DashboardSubscription(BaseModel):
+    """A scheduled email delivery of a dashboard's rendered tiles, run with fixed control_values."""
+    name: str
+    schedule: str  # cron syntax, same as workflow triggers
+    recipients: list[DashboardSubscriptionRecipient]
+    control_values: Optional[dict[str, Any]] = None
+
+    @field_validator('recipients')
+    @classmethod
+    def validate_recipients_nonempty(cls, v):
+        if not v:
+            raise ValueError("Subscription must have at least one recipient")
+        return v
+
+
+class Dashboard(BaseModel):
+    """Main dashboard schema — an independent top-level entity, not nested inside a workflow.
+
+    Reuses DataSourceConfig/DataSourceParameterMapping/DataSourceJoin (workflow data_processor
+    machinery) and FormSection/FormLayout (placement grid) verbatim; everything else is new.
+    """
+    kind: Literal["dashboard"]
+    name: str
+    description: Optional[str] = None
+    view_roles: Optional[list[str]] = None
+    controls: Optional[list[DashboardControl]] = None
+    tiles: list[DashboardTile]
+    layout: FormLayout
+    subscriptions: Optional[list[DashboardSubscription]] = None
+
+    @field_validator('controls')
+    @classmethod
+    def validate_control_names_unique(cls, v):
+        if v:
+            names = [c.name for c in v]
+            if len(names) != len(set(names)):
+                raise ValueError("Dashboard control names must be unique")
+        return v
+
+    @field_validator('tiles')
+    @classmethod
+    def validate_tiles_nonempty_and_unique(cls, v):
+        if not v:
+            raise ValueError("Dashboard must contain at least one tile")
+        tile_ids = [t.id for t in v]
+        if len(tile_ids) != len(set(tile_ids)):
+            raise ValueError("Tile IDs must be unique")
+        return v
+
+    @model_validator(mode='after')
+    def validate_layout_tile_references(self):
+        """Validate that layout sections reference existing tile ids — checks BOTH grid and columns
+        modes. Deliberately not reusing ApprovalProcess.validate_layout_field_references: that method
+        only ever checks section.grid, a pre-existing gap in the workflow validator not mirrored here."""
+        tile_ids = {t.id for t in self.tiles}
+        for section in self.layout.sections:
+            referenced: set[str] = set()
+            if section.grid:
+                for row in section.grid:
+                    referenced.update(row)
+            if section.columns:
+                for col in section.columns:
+                    referenced.update(col)
+            for tile_id in referenced:
+                if tile_id not in tile_ids:
+                    raise ValueError(
+                        f"Section '{section.id}' references unknown tile '{tile_id}'. "
+                        f"Available tiles: {', '.join(sorted(tile_ids))}"
+                    )
+        return self
+
+
+class DashboardParser:
+    """Parser class for dashboard YAML files — kept fully separate from ApprovalMLParser (workflows)."""
+
+    def __init__(self):
+        self.parsed_dashboard: Optional[Dashboard] = None
+        self.validation_errors: list[str] = []
+
+    def parse_yaml(self, yaml_content: str) -> Optional[Dashboard]:
+        """Parse YAML content and validate against the Dashboard schema."""
+        try:
+            data = safe_load_workflow_yaml(yaml_content)
+
+            if not isinstance(data, dict):
+                raise ValueError("YAML must contain a dictionary at root level")
+
+            self.parsed_dashboard = Dashboard(**data)
+            self.validation_errors = []
+
+            return self.parsed_dashboard
+
+        except yaml.YAMLError as e:
+            self.validation_errors = [f"YAML parsing error: {str(e)}"]
+            return None
+        except ValidationError as e:
+            self.validation_errors = [f"Validation error: {str(e)}"]
+            return None
+        except Exception as e:
+            self.validation_errors = [f"Unexpected error: {str(e)}"]
+            return None
+
+    def parse_file(self, file_path: str) -> Optional[Dashboard]:
+        """Parse dashboard YAML file from disk."""
+        try:
+            with open(file_path, encoding='utf-8') as file:
+                yaml_content = file.read()
+            return self.parse_yaml(yaml_content)
+        except FileNotFoundError:
+            self.validation_errors = [f"File not found: {file_path}"]
+            return None
+        except OSError as e:
+            self.validation_errors = [f"Error reading file: {str(e)}"]
+            return None
+
+
+def parse_dashboard_yaml(yaml_content: str) -> tuple[Optional[Dashboard], dict[str, Any]]:
+    """Convenience function to parse dashboard YAML and return a validation summary."""
+    parser = DashboardParser()
+    dashboard = parser.parse_yaml(yaml_content)
+    return dashboard, {
+        "is_valid": dashboard is not None and len(parser.validation_errors) == 0,
+        "errors": parser.validation_errors,
+        "dashboard_name": dashboard.name if dashboard else None,
+        "tile_count": len(dashboard.tiles) if dashboard else 0,
+    }
+
+
+def parse_dashboard_file(file_path: str) -> tuple[Optional[Dashboard], dict[str, Any]]:
+    """Convenience function to parse a dashboard YAML file and return a validation summary."""
+    parser = DashboardParser()
+    dashboard = parser.parse_file(file_path)
+    return dashboard, {
+        "is_valid": dashboard is not None and len(parser.validation_errors) == 0,
+        "errors": parser.validation_errors,
+        "dashboard_name": dashboard.name if dashboard else None,
+        "tile_count": len(dashboard.tiles) if dashboard else 0,
+    }
 
 
 class WorkflowSafeLoader(yaml.SafeLoader):

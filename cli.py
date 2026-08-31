@@ -12,11 +12,32 @@ Usage:
 
 import sys
 import argparse
-from approvalml import parse_approvalml_file
+import yaml
+from approvalml import parse_approvalml_file, parse_dashboard_file
+
+
+def _file_kind(file_path):
+    """Sniff a YAML file's `kind:` field to dispatch between workflow and dashboard parsing.
+
+    Workflows default to 'workflow' when the key is absent (nearly all existing workflow YAML),
+    so this never breaks existing files. See lat.md/dashboards.md "Distinguishing dashboard YAML
+    from workflow YAML" for why kind: is the chosen discriminator rather than structural guessing.
+    """
+    try:
+        with open(file_path, encoding='utf-8') as f:
+            data = yaml.safe_load(f)
+    except (OSError, yaml.YAMLError):
+        return "workflow"
+    if isinstance(data, dict):
+        return data.get('kind', 'workflow')
+    return "workflow"
 
 
 def cmd_validate(args):
-    """Validate an ApprovalML YAML file."""
+    """Validate an ApprovalML workflow or dashboard YAML file."""
+    if _file_kind(args.file) == "dashboard":
+        return _cmd_validate_dashboard(args)
+
     workflow, summary = parse_approvalml_file(args.file)
 
     if workflow:
@@ -39,8 +60,31 @@ def cmd_validate(args):
         return 1
 
 
+def _cmd_validate_dashboard(args):
+    """Validate a dashboard YAML file (kind: dashboard)."""
+    dashboard, summary = parse_dashboard_file(args.file)
+
+    if dashboard:
+        print(f"✓ Valid: {dashboard.name}")
+        if args.verbose:
+            tiles = [t.id for t in dashboard.tiles]
+            controls = [c.name for c in dashboard.controls] if dashboard.controls else []
+            print(f"  Description : {dashboard.description or '—'}")
+            print(f"  Tiles       : {len(tiles)} — {', '.join(tiles)}")
+            print(f"  Controls    : {len(controls)} — {', '.join(controls)}")
+        return 0
+    else:
+        print(f"✗ Invalid: {args.file}", file=sys.stderr)
+        for error in summary.get("errors", []):
+            print(f"  • {error}", file=sys.stderr)
+        return 1
+
+
 def cmd_info(args):
-    """Print a summary of a workflow file."""
+    """Print a summary of a workflow or dashboard file."""
+    if _file_kind(args.file) == "dashboard":
+        return _cmd_info_dashboard(args)
+
     workflow, summary = parse_approvalml_file(args.file)
 
     if not workflow:
@@ -65,6 +109,33 @@ def cmd_info(args):
     print(f"\nWorkflow steps ({len(steps)}):")
     for name, step in steps.items():
         print(f"  {name:<25} {step.type}")
+
+    return 0
+
+
+def _cmd_info_dashboard(args):
+    """Print a summary of a dashboard file (kind: dashboard)."""
+    dashboard, summary = parse_dashboard_file(args.file)
+
+    if not dashboard:
+        print(f"✗ Could not parse: {args.file}", file=sys.stderr)
+        for error in summary.get("errors", []):
+            print(f"  • {error}", file=sys.stderr)
+        return 1
+
+    print(f"\n{dashboard.name}")
+    print(f"{'─' * len(dashboard.name)}")
+    if dashboard.description:
+        print(f"{dashboard.description}\n")
+
+    controls = dashboard.controls or []
+    print(f"Controls ({len(controls)}):")
+    for control in controls:
+        print(f"  {control.name:<25} {control.type}")
+
+    print(f"\nTiles ({len(dashboard.tiles)}):")
+    for tile in dashboard.tiles:
+        print(f"  {tile.id:<25} {tile.type}")
 
     return 0
 
