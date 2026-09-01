@@ -3367,8 +3367,8 @@ FIELD_TYPES = {
             "Populates options from this company's own asset registry (GET /assets?category=...) "
             "instead of a hardcoded options: list or an external data_source connector — e.g. a "
             "dropdown of actually-registered apps from app_registry. Shape: "
-            "options_from: { asset_category: \"app_registry\", value_field: \"app\" } — value_field "
-            "is the property key on each asset providing the option value/label. See "
+            "options_from: { asset_category: \"app_registry\", value_field: \"website_url\", label_field: \"app_instance_id\" } — "
+            "value_field provides the option value; label_field (optional) provides the display label (defaults to value_field). See "
             "docs/spawn_provisioning.md's \"Bulk Onboarding at Scale\"."
         )
     },
