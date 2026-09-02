@@ -316,6 +316,8 @@ class OptionsFromAssetCategory(BaseModel):
     asset_category: str   # e.g. "app_registry"
     value_field: str      # property key on each asset providing the option value
     label_field: Optional[str] = None  # property key on each asset providing the option label (defaults to value_field)
+    filter_field: Optional[str] = None  # keep assets whose properties[filter_field] equals filter_value
+    filter_value: Optional[str] = None
 
 
 class HeaderGroup(BaseModel):

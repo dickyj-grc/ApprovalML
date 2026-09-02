@@ -3368,7 +3368,9 @@ FIELD_TYPES = {
             "instead of a hardcoded options: list or an external data_source connector — e.g. a "
             "dropdown of actually-registered apps from app_registry. Shape: "
             "options_from: { asset_category: \"app_registry\", value_field: \"website_url\", label_field: \"app_instance_id\" } — "
-            "value_field provides the option value; label_field (optional) provides the display label (defaults to value_field). See "
+            "value_field provides the option value; label_field (optional) provides the display label (defaults to value_field). "
+            "If value_field is a JSON array (e.g. workspaces slugs), each element is one option. "
+            "filter_field + filter_value (optional) keep only matching assets (e.g. app: plane). See "
             "docs/spawn_provisioning.md's \"Bulk Onboarding at Scale\"."
         )
     },
