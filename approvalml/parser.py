@@ -1590,12 +1590,16 @@ class DashboardControlOption(BaseModel):
 class DashboardControl(BaseModel):
     """A dashboard-level filter widget whose resolved value(s) feed tile params via from_control.
 
+    'name' is the wire identifier from_control references and must stay a stable slug; 'label' is
+    the optional human-facing text shown next to the widget (falls back to 'name' when absent).
+
     Structural shape only — requiredness of 'options' per type and the known date_range_preset
     key set are enforced by the dashboard YAML validator, not here (mirrors the stat template
     two-phase validation pattern: parser defines shape, yaml_validator.py enforces business rules).
     """
     name: str
     type: Literal["date", "select", "multi_select", "date_range_preset"]
+    label: Optional[str] = None  # Display text for viewers — name stays the from_control/wire identifier
     options: Optional[list[DashboardControlOption]] = None
 
 

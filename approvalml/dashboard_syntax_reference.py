@@ -32,12 +32,18 @@ layout:                                      # Required — placement
 subscriptions: []                            # Optional — scheduled email delivery (schema only, not yet executed)
 
 CONTROLS — dashboard-level filter widgets. A tile's data_processor.params[] reads a
-control's resolved value via `from_control: <name>`. controls[].name must be unique.
+control's resolved value via `from_control: <name>`. controls[].name must be unique and
+is the wire identifier from_control references — keep it a stable slug, never renamed once
+tiles reference it. `label` is optional, human-facing display text shown next to the widget
+in the viewer (falls back to `name` when omitted) — always set it for anything shown to end
+users, since a raw slug like "date_from" is not a good filter label.
 
 controls:
   - name: date_from
+    label: "From"
     type: date
   - name: pillar
+    label: "Pillar"
     type: select                              # static options, one value
     options:
       - { label: "Growth & Web", value: "growth" }
