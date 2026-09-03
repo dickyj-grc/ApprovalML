@@ -3374,7 +3374,15 @@ FIELD_TYPES = {
             "docs/spawn_provisioning.md's \"Bulk Onboarding at Scale\"."
         )
     },
-    "multiselect": {"required_props": ["options"], "validation": ["min_selections", "max_selections"]},
+    "multiselect": {
+        "required_props": ["options"],
+        "validation": ["min_selections", "max_selections"],
+        "description": (
+            "Multiple selection. `options` may be a static [{value,label}] list or "
+            "{ data_source: { source_name, object_path, value_field, label_field } } "
+            "fetched once on mount (same /fetch endpoint as autocomplete)."
+        ),
+    },
     "checkbox": {"validation": ["required"]},
     "radio": {"required_props": ["options"], "validation": ["required"], "optional_props": ["display_as"]},
     "file_upload": {"validation": ["accept", "multiple", "max_size", "max_files"], "optional_props": ["capture"]},
