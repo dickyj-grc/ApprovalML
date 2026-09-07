@@ -3367,12 +3367,22 @@ FIELD_TYPES = {
             "Populates options from this company's own asset registry (GET /assets?category=...) "
             "instead of a hardcoded options: list or an external data_source connector — e.g. a "
             "dropdown of actually-registered apps from app_registry. Shape: "
-            "options_from: { asset_category: \"app_registry\", value_field: \"app\" } — value_field "
-            "is the property key on each asset providing the option value/label. See "
+            "options_from: { asset_category: \"app_registry\", value_field: \"website_url\", label_field: \"app_instance_id\" } — "
+            "value_field provides the option value; label_field (optional) provides the display label (defaults to value_field). "
+            "If value_field is a JSON array (e.g. workspaces slugs), each element is one option. "
+            "filter_field + filter_value (optional) keep only matching assets (e.g. app: plane). See "
             "docs/spawn_provisioning.md's \"Bulk Onboarding at Scale\"."
         )
     },
-    "multiselect": {"required_props": ["options"], "validation": ["min_selections", "max_selections"]},
+    "multiselect": {
+        "required_props": ["options"],
+        "validation": ["min_selections", "max_selections"],
+        "description": (
+            "Multiple selection. `options` may be a static [{value,label}] list or "
+            "{ data_source: { source_name, object_path, value_field, label_field } } "
+            "fetched once on mount (same /fetch endpoint as autocomplete)."
+        ),
+    },
     "checkbox": {"validation": ["required"]},
     "radio": {"required_props": ["options"], "validation": ["required"], "optional_props": ["display_as"]},
     "file_upload": {"validation": ["accept", "multiple", "max_size", "max_files"], "optional_props": ["capture"]},

@@ -314,7 +314,10 @@ class OptionsFromAssetCategory(BaseModel):
     data_source connector. See docs/spawn_provisioning.md's "Bulk Onboarding at Scale"
     for the motivating case: a dropdown of actually-registered apps from app_registry."""
     asset_category: str   # e.g. "app_registry"
-    value_field: str      # property key on each asset providing the option value/label
+    value_field: str      # property key on each asset providing the option value
+    label_field: Optional[str] = None  # property key on each asset providing the option label (defaults to value_field)
+    filter_field: Optional[str] = None  # keep assets whose properties[filter_field] equals filter_value
+    filter_value: Optional[str] = None
 
 
 class HeaderGroup(BaseModel):
