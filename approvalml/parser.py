@@ -1604,6 +1604,11 @@ class DashboardControl(BaseModel):
     type: Literal["date", "select", "multi_select", "date_range_preset"]
     label: Optional[str] = None  # Display text for viewers — name stays the from_control/wire identifier
     options: Optional[list[DashboardControlOption]] = None
+    default: Optional[Any] = None  # Pre-fills control_values before a tile's first execution — see
+    # dashboard_service._apply_control_defaults. type: date accepts "today" (resolved at execute
+    # time) or an ISO date string; date_range_preset/select accept one of their own option values;
+    # multi_select accepts a list of them. A control with no default stays unset until the viewer
+    # picks a value, and tiles that need it are held back rather than executed with it missing.
 
 
 class DashboardAssetSource(BaseModel):
