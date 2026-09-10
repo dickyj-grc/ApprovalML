@@ -70,6 +70,23 @@ concrete dates:
 
 select/multi_select/date_range_preset all REQUIRE a non-empty options list. `date` requires none.
 
+DEFAULTS — controls[].default pre-fills a control before a tile ever executes. SET ONE on every
+control any tile's `data_processor.params[]` reads via `from_control`, UNLESS the whole point is
+forcing the viewer to choose before anything loads: a control with no default stays unset until
+the viewer picks a value, and any tile that needs it is held back (not executed, not an error) —
+but a REQUIRED connector param with no default and no viewer value yet is exactly the setup that
+used to reach the connector broken, so default an unconditionally-required date/select control:
+  - name: date_from
+    type: date
+    default: today                              # or a literal ISO date, e.g. "2026-01-01"
+  - name: pillar
+    type: select
+    default: growth                              # must be one of this control's own options[].value
+  - name: timeframe
+    type: date_range_preset
+    default: last_30_days                        # must be one of this control's own options[].value
+multi_select accepts a YAML list as its default (each element must be one of options[].value).
+
 TILES — every tile is one flat object discriminated by `type`. Each tile needs EXACTLY ONE
 of `data_processor` or `source` — never both, never neither. `id` must be unique within the
 dashboard and is what layout.sections[].grid/.columns reference.
