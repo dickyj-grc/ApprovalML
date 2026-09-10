@@ -84,6 +84,15 @@ Common fields (all tile types):
                   Exactly one of data_processor/source, not both.
   row_path      JSONata expression selecting the row array out of the raw response.
                   Required for data_processor tiles; NOT used (and must be omitted) for source: asset tiles.
+                  The raw connector response is ALWAYS wrapped as {"data": <response>} before this
+                  expression runs — even when the connector already returns a bare list of rows. So
+                  the row array is at `data`, never at `$` (the JSONata root context here IS the
+                  {"data": ...} wrapper, not the rows themselves). `row_path: "$"` silently returns
+                  the wrapper object — for a table/line_chart building the row array with an inline
+                  `$ {...}` group-by, this yields an EMPTY result, not an error; for other tile types
+                  it silently gets wrapped as a single bogus one-element row list. Use `row_path:
+                  "data"` (see examples below), and for inline group-by expressions start from `data
+                  {...}`, never `$ {...}`.
   filter        Optional JSONata predicate over the whole extracted `rows` array, applied after
                   row extraction and join enrichment, before type-specific processing. Valid on every type.
 
@@ -208,6 +217,13 @@ param (default "ids"), separator (default ", "), as_array (default false).
 ROW FILTERING (filter:) — available on every tile type, JSONata predicate over the whole rows
 array. `and`/`or` are native keyword operators; negation is the $not(...) FUNCTION, not a `not`
 keyword — `rows[not x]` is a parse error, use `rows[$not(x)]`.
+
+TOP-N / SLICING — the range operator (`..`) only parses as an ARRAY LITERAL, e.g. `[0..4]` on its
+own. It is NOT a valid index predicate directly against an expression — `sorted[0..4]` is a parse
+error ("Expected ], got .."), even though that form works in the standalone JSONata reference
+implementation. Wrap the range in its own brackets instead: `sorted[[0..4]]` (double brackets) —
+the inner `[0..4]` builds the index array, the outer `[...]` applies it. Common top-N pattern:
+  rows ^(>amount) [[0..4]]     -> top 5 rows by amount, descending
 
 COUNT / SUM / ARITHMETIC — stat.settings.metric/compare_metric and bar_chart.y (when agg: is
 omitted) are evaluated as ONE JSONata expression against the WHOLE extracted row array as
