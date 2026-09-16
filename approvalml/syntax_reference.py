@@ -3387,6 +3387,23 @@ FIELD_TYPES = {
     "radio": {"required_props": ["options"], "validation": ["required"], "optional_props": ["display_as"]},
     "file_upload": {"validation": ["accept", "multiple", "max_size", "max_files"], "optional_props": ["capture"]},
     "signature": {"validation": ["required"], "optional_props": ["initial", "label"]},
+    "typst_preview": {
+        "validation": [],
+        "required_props": ["render_step"],
+        "optional_props": ["label"],
+        "description": (
+            "Display-only \"Preview Document\" button. Compiles the named `render_step`'s "
+            "typst_render config with the form's current (possibly partial) data and opens "
+            "the resulting PDF — click-to-render, not live-as-you-type. Never markable "
+            "required; has no value of its own to submit."
+        ),
+        "yaml_example": (
+            "- name: contract_preview\n"
+            "  type: typst_preview\n"
+            "  label: \"Preview Contract\"\n"
+            "  render_step: render_contract   # name of the automatic step whose typst_render config to compile"
+        )
+    },
     "json": {
         "validation": ["required"],
         "optional_props": ["display_as", "default_value"],
@@ -3546,7 +3563,7 @@ STEP_TYPES = {
     },
     "automatic": {
         "required_props": ["on_complete"],
-        "optional_props": ["api", "data_processor", "asset", "field_mapping", "loop", "on_failure"],
+        "optional_props": ["api", "data_processor", "asset", "field_mapping", "loop", "on_failure", "typst_render"],
         "requires_one_of": ["api", "data_processor", "asset", "field_mapping"],
         "field_mapping_description": (
             "Extracts and transforms values from webhook payloads or API responses into form fields. "
@@ -3564,6 +3581,19 @@ STEP_TYPES = {
             "required": ["asset_name"],
             "one_of": [["data_from"], ["data_to"], ["merge_from"], ["fields_to"], ["fields_from"]],
             "optional": ["field"]
+        },
+        "typst_render_props": {
+            "required": ["template_asset", "save_to"],
+            "optional": ["data_from"],
+            "description": (
+                "Compiles a company-owned `.typ` template asset (Document Templates asset "
+                "schema) into a PDF, merging in `data_from` (template variable → form field "
+                "name, resolved directly against request_data). Any mapped field whose value "
+                "is a captured signature image is placed into the template like any other "
+                "input. The compiled PDF is written to the form field named by `save_to` in "
+                "the same {file_path, original_name, content_type} shape a file_upload field "
+                "uses, so a following `asset_file:` step can store it with no extra wiring."
+            )
         }
     },
     "asset": {
@@ -3678,7 +3708,7 @@ STEP_TYPES = {
     },
     "end": {
         "required_props": [],
-        "optional_props": ["metadata", "notify_requestor", "notify_completion", "archive", "return_pdf"],
+        "optional_props": ["metadata", "notify_requestor", "notify_completion", "archive", "return_pdf", "submit_workflow"],
         "description": (
             "Terminates the workflow (approved, or rejected if the step name contains 'reject'). "
             "'notify_completion' (boolean, default true) controls the automatic completion PDF "
@@ -3690,7 +3720,13 @@ STEP_TYPES = {
             "list queries and the monthly instance-quota count. 'return_pdf' (boolean, default "
             "false) renders and returns the completion PDF inline in the response to a synchronous "
             "external API caller (e.g. a token-exchange trigger) instead of only emailing it — only "
-            "takes effect when this exact end step is reached without pausing on a human step."
+            "takes effect when this exact end step is reached without pausing on a human step. "
+            "'submit_workflow' (workflow name, e.g. \"Employee Onboarding\") auto-starts that "
+            "workflow immediately after this instance completes, passing this instance's own "
+            "request_data as the new instance's form_data (matched by field name) and stamping "
+            "metadata.source_instance_id — the same start_workflow entry point cron/webhook/manual "
+            "submission already uses, decoupled from this instance's own lifecycle (not a spawn: "
+            "the new instance runs independently and does not block or get blocked by this one)."
         )
     }
 }
