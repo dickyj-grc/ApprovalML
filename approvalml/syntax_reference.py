@@ -136,11 +136,26 @@ triggers:
   - type: webhook
 ```
 
+#### `asset_expiry` — Fires when an asset's date field crosses a threshold
+Runs the workflow once per asset of the named schema whose `date_role` field (a promoted `expires_at` or `effective_from` value, read from that asset's `properties`) is within `offset_days` of now. Unlike `cron`, this fires zero-to-N times per check — once per matching asset, not once per tick. Use this for time-bounded obligations: certificate/permit renewals, contractor access grants/revocations, anything keyed off "this asset's date is approaching."
+
+```yaml
+triggers:
+  - type: asset_expiry
+    schema: "Calibration Record"   # asset schema name to watch
+    date_role: expires_at          # or effective_from
+    offset_days: 30                # fire 30 days before the date (0 = on the day)
+```
+
+The asset's `properties.owner_email` (approver), `properties.expires_at`/`effective_from` (the date), and its own `name` column (subject/display label) are what the fired instance's form is seeded from — no other schema configuration is required; these are fixed conventions, not something declared elsewhere.
+
+`schema` and `date_role` define *what* the trigger watches — treat them as fixed once authored, the same way you wouldn't change a `cron` trigger's meaning by editing its `schedule` to point at a different workflow's concern. Only `offset_days` is meant to be tuned per install.
+
 ### Trigger Fields
 
 | Field | Required | Description |
 |-------|----------|-------------|
-| `type` | ✅ Yes | `cron`, `webhook`, or `one_time` |
+| `type` | ✅ Yes | `cron`, `webhook`, `one_time`, or `asset_expiry` |
 | `schedule` | For `cron`/`one_time` | Cron expression, e.g. `0 9 * * *` for daily 9 AM |
 | `max_runs` | No | Auto-pause after N executions |
 | `allow_concurrent` | No | `false` (default) — skip run if a previous instance from this trigger is still in progress. Set `true` to allow overlap. |
@@ -148,6 +163,9 @@ triggers:
 | `requestor_email` | No | Email of the employee to treat as submitter |
 | `requestor_company_role` | No | **Recommended for scheduled workflows** — the first active employee with this `company_role` becomes the submitter |
 | `data_condition` | No | Fetch external data and only launch if changes are detected |
+| `schema` | For `asset_expiry` | Name of the asset schema to watch |
+| `date_role` | For `asset_expiry` | `expires_at` or `effective_from` — which promoted date column to check |
+| `offset_days` | For `asset_expiry` | Days before the date to fire; `0` fires on the day itself |
 
 ### Best Practice: Use `requestor_company_role` for Ownership
 
@@ -202,6 +220,7 @@ triggers:
 
 - User says "every hour", "daily", "nightly", "weekly", "every Monday", "on a schedule" → `type: cron`
 - User says "when an event occurs", "when data arrives", "via API", "incoming webhook" → `type: webhook`
+- User says "when a certificate/permit/contract expires", "before this date", "renewal reminder", "when access should be revoked/granted based on a date" → `type: asset_expiry`
 - User says nothing about scheduling or events (manual form submission) → **omit** triggers entirely
 
 ### Cron workflows and form fields
