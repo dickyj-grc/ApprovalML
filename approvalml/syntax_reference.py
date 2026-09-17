@@ -3584,7 +3584,7 @@ STEP_TYPES = {
         },
         "typst_render_props": {
             "required": ["template_asset", "save_to"],
-            "optional": ["data_from"],
+            "optional": ["data_from", "template_field"],
             "description": (
                 "Compiles a company-owned `.typ` template asset (Document Templates asset "
                 "schema) into a PDF, merging in `data_from` (template variable → form field "
@@ -3592,7 +3592,10 @@ STEP_TYPES = {
                 "is a captured signature image is placed into the template like any other "
                 "input. The compiled PDF is written to the form field named by `save_to` in "
                 "the same {file_path, original_name, content_type} shape a file_upload field "
-                "uses, so a following `asset_file:` step can store it with no extra wiring."
+                "uses, so a following `asset_file:` step can store it with no extra wiring. "
+                "`template_field` optionally names the exact asset field holding the template "
+                "file — only needed when the template asset has more than one file_upload "
+                "field; without it, the first file field found is used."
             )
         }
     },
