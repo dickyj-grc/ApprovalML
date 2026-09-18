@@ -313,7 +313,7 @@ class OptionsFromAssetCategory(BaseModel):
     (GET /assets?category=...), instead of a hardcoded options: list or an external
     data_source connector. See docs/spawn_provisioning.md's "Bulk Onboarding at Scale"
     for the motivating case: a dropdown of actually-registered apps from app_registry."""
-    asset_category: str   # e.g. "app_registry"
+    asset_category: str   # e.g. "access_app_registry"
     value_field: str      # property key on each asset providing the option value
     label_field: Optional[str] = None  # property key on each asset providing the option label (defaults to value_field)
     filter_field: Optional[str] = None  # keep assets whose properties[filter_field] equals filter_value
