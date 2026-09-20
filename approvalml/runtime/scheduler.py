@@ -121,7 +121,7 @@ class WorkflowScheduler:
         trigger = await self._load_trigger(state)
         if trigger is None:
             return
-        if trigger.type.value != "cron":
+        if getattr(trigger.type, "value", trigger.type) != "cron":
             return  # one_time/webhook triggers aren't ticked by this loop
         next_run_at = _next_cron_run(trigger.schedule, now)
         await self.engine.wstore.set_trigger_next_run(
@@ -135,7 +135,7 @@ class WorkflowScheduler:
         trigger = await self._load_trigger(state)
         if trigger is None:
             return
-        if trigger.type.value != "cron":
+        if getattr(trigger.type, "value", trigger.type) != "cron":
             return
 
         next_run_at = _next_cron_run(trigger.schedule, now)
