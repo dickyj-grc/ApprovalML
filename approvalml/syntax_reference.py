@@ -1821,6 +1821,37 @@ fetch_iam_data:
 - `compare_to_asset`: Asset name to compare fetched data against (uses deepdiff)
 - `save_diff_to`: Variable to store the diff result string (`"None"` if no changes, or descriptive summary)
 - `ignore_keys`: Top-level keys to exclude from comparison
+- `verify`: Optional target-state check consulted only when a retry resumes a genuinely ambiguous prior attempt (the process crashed between the external call and recording its outcome — not a normal failure). See "Target-State Verification (`verify:`)" below.
+
+#### Target-State Verification (`verify:`)
+
+An optional block on `data_processor`/`data_source` that reconciles against the real external state before blindly re-running a step's side effect on retry — "did this already happen?" instead of "assume it didn't."
+
+```yaml
+provision_user:
+  type: automatic
+  data_source:
+    source_name: "Odoo Create User"
+    save_to: create_result
+    params:
+      - name: email
+        from_field: field.email
+    verify:
+      check:
+        source_name: "Odoo Get User By Email"   # any data source — same source_id/source_name + params resolution
+        params:
+          - name: email
+            from_field: field.email
+      matches: "$exists(data[0]) and data[0].active = true"   # JSONata boolean, evaluated against the check's raw result
+  on_complete:
+    continue_to: notify
+```
+
+**How it fires:** only when the step-execution idempotency ledger shows a `pending` attempt with no recorded outcome — meaning a prior attempt crashed mid-flight and it's genuinely unknown whether the write landed. A clean failure never reaches `verify:` (it's already known not to have happened); a clean success is caught earlier by the ledger's own succeeded-attempt guard. If `verify:` is absent, or `matches` doesn't match, the engine falls back to re-running the step exactly as it did before this feature existed — `verify:` is fully optional and changes nothing for a step that doesn't declare it.
+
+**`verify` properties:**
+- `check` (required): a data-source config using the same `source_id`/`source_name` + `params` resolution as the step's own fetch — points at a query that returns the current state of whatever the step just tried to write
+- `matches` (required): a JSONata boolean expression evaluated against `check`'s raw result. The author encodes create/update/delete semantics themselves — e.g. `$exists(data[0])` for a create, `$count(data) = 0` for a delete — the engine has no built-in CRUD vocabulary
 
 **Params — source options:**
 - `from_field: field.<name>` — reads a value from a workflow form field or variable
@@ -3594,7 +3625,26 @@ STEP_TYPES = {
         ),
         "data_processor_props": {
             "required": ["source_name", "save_to"],
-            "optional": ["compare_to_asset", "save_diff_to", "ignore_keys", "field_mapping", "output_schema"]
+            "optional": ["compare_to_asset", "save_diff_to", "ignore_keys", "field_mapping", "output_schema", "verify"]
+        },
+        "verify_props": {
+            "required": ["check", "matches"],
+            "description": (
+                "Target-state verification, consulted only when a retry resumes a "
+                "genuinely ambiguous prior attempt (a crash between the external call "
+                "and recording its outcome) — not on a normal failure or a normal "
+                "first run. `check` is a data-source config (same source_id/"
+                "source_name + params resolution as data_processor itself) pointed at "
+                "a query for the current state of whatever the step just tried to "
+                "write. `matches` is a JSONata boolean evaluated against check's raw "
+                "result — the author encodes create/update/delete semantics "
+                "themselves (e.g. `$exists(data[0])` for a create, `$count(data) = 0` "
+                "for a delete). If matches is true, the write is treated as already "
+                "done and is not re-run. Omitting verify entirely (the default) falls "
+                "back to re-running the step, unchanged from before this feature "
+                "existed — only add verify to a step where re-running its side effect "
+                "would be unsafe if it actually already succeeded."
+            )
         },
         "asset_props": {
             "required": ["asset_name"],
