@@ -237,6 +237,12 @@ of an Odoo many2one's [id, name] tuple ('product_id.0' reads the id half). Picki
 field WITHOUT an index (pick: product_id) returns the raw [id, name] pair stringified as one
 value (e.g. "[2778, 'Widget']") — almost never what's wanted; index into it instead.
 
+This '.1'/'.0' dot-index convention belongs to field/on/pick ONLY. Never carry it into an actual
+JSONata expression (row_path, filter, x, y, columns[].path, series[].path, settings.metric/
+compare_metric) — a digit can't follow '.' as a JSONata path step ("The literal value N cannot
+be used as a step within a path expression"). Use bracket indexing there instead: product_id[1],
+never product_id.1.
+
 `pick: "$"` (or `{output: "$"}` inside a dict pick) attaches each matched record as-is, whole,
 instead of extracting one field — use this when the tile needs every joined field, not a chosen
 few:
