@@ -231,6 +231,27 @@ source_type: asset, and must be ABSENT when source_type: asset), category, on (d
 pick (default "name"; string or {output: source_field} map), as (required if pick is a string),
 param (default "ids"), separator (default ", "), as_array (default false).
 
+field/on/pick are shallow dotted paths, NOT JSONata — 'properties.tier' walks into a nested dict,
+and a purely-numeric segment indexes into a list, e.g. 'product_id.1' reads the display-name half
+of an Odoo many2one's [id, name] tuple ('product_id.0' reads the id half). Picking a many2one
+field WITHOUT an index (pick: product_id) returns the raw [id, name] pair stringified as one
+value (e.g. "[2778, 'Widget']") — almost never what's wanted; index into it instead.
+
+`pick: "$"` (or `{output: "$"}` inside a dict pick) attaches each matched record as-is, whole,
+instead of extracting one field — use this when the tile needs every joined field, not a chosen
+few:
+  join:
+    - field: order_line
+      source_id: src_...
+      on: id
+      pick: { lines: "$" }
+      as_array: true          # → lines: [{id, name, product_id, price_total, ...}, ...]
+
+WITH as_array: true, picked values keep their original type from the source record — a numeric
+field (e.g. price_total) stays a number, not a string, so downstream `$sum(rows.lines.price)`-
+style arithmetic works without a cast. WITHOUT as_array (the default), multiple matches are
+joined into one string via `separator`, which unavoidably stringifies each value first.
+
 ROW FILTERING (filter:) — available on every tile type, JSONata predicate over the whole rows
 array. `and`/`or` are native keyword operators; negation is the $not(...) FUNCTION, not a `not`
 keyword — `rows[not x]` is a parse error, use `rows[$not(x)]`.
