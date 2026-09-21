@@ -243,6 +243,17 @@ compare_metric) — a digit can't follow '.' as a JSONata path step ("The litera
 be used as a step within a path expression"). Use bracket indexing there instead: product_id[1],
 never product_id.1.
 
+CHOOSING A JOIN TARGET — before adding a join at all, check whether the field is already in
+another already-selected data source's output_fields; if so, reference it directly and skip the
+join. When a join is genuinely needed, the target MUST be a "list all X" / search-style source
+that returns many records in one call — never a "get one record by id" single-record source. The
+join always sends ONE call with a single param whose value is the FULL list of every id collected
+across all rows (default param name "ids"); a single-record endpoint can't consume a list of ids
+and the join will silently match nothing. A list-style target's response envelope is unwrapped
+automatically even when nested (e.g. {"data": [{"products": [...], "total": N, "skip": N, "limit":
+N}]}) — no special join configuration needed for that, just pick a source that returns the full
+collection.
+
 `pick: "$"` (or `{output: "$"}` inside a dict pick) attaches each matched record as-is, whole,
 instead of extracting one field — use this when the tile needs every joined field, not a chosen
 few:
