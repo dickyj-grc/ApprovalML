@@ -119,5 +119,9 @@ class TriggerRegistry:
         """Return True if an adapter is registered for the type."""
         return trigger_type in self._adapters
 
+    def unregister(self, trigger_type: str) -> bool:
+        """Remove an adapter from the registry. Returns True if one was removed."""
+        return self._adapters.pop(trigger_type, None) is not None
+
 
 default_registry = TriggerRegistry()
