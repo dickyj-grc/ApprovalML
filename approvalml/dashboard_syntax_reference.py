@@ -101,15 +101,15 @@ Common fields (all tile types):
                   Exactly one of data_processor/source, not both.
   row_path      JSONata expression selecting the row array out of the raw response.
                   Required for data_processor tiles; NOT used (and must be omitted) for source: asset tiles.
-                  The raw connector response is ALWAYS wrapped as {"data": <response>} before this
-                  expression runs — even when the connector already returns a bare list of rows. So
-                  the row array is at `data`, never at `$` (the JSONata root context here IS the
-                  {"data": ...} wrapper, not the rows themselves). `row_path: "$"` silently returns
-                  the wrapper object — for a table/line_chart building the row array with an inline
-                  `$ {...}` group-by, this yields an EMPTY result, not an error; for other tile types
-                  it silently gets wrapped as a single bogus one-element row list. Use `row_path:
-                  "data"` (see examples below), and for inline group-by expressions start from `data
-                  {...}`, never `$ {...}`.
+                  The JSONata root context depends on the raw connector response shape: a BARE LIST
+                  response is wrapped as {"data": <list>} — use `row_path: "data"` for those. A
+                  response that is ALREADY a JSON object (e.g. {"records": [...]}) is exposed AS-IS as
+                  the root — name the real key holding the row array (e.g. `row_path: "records"`), NOT
+                  `"data"`. Either way, never use `$` as the row_path — for a table/line_chart building
+                  the row array with an inline `$ {...}` group-by, this yields an EMPTY result, not an
+                  error; for other tile types it silently gets wrapped as a single bogus one-element
+                  row list. For an inline group-by expression, start from the correct root key followed
+                  by `{...}` (e.g. `data {...}` or `records {...}`), never `$ {...}`.
   filter        Optional JSONata predicate over the whole extracted `rows` array, applied after
                   row extraction and join enrichment, before type-specific processing. Valid on every type.
 
