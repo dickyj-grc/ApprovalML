@@ -136,11 +136,26 @@ triggers:
   - type: webhook
 ```
 
+#### `asset_expiry` — Fires when an asset's date field crosses a threshold
+Runs the workflow once per asset of the named schema whose `date_role` field (a promoted `expires_at` or `effective_from` value, read from that asset's `properties`) is within `offset_days` of now. Unlike `cron`, this fires zero-to-N times per check — once per matching asset, not once per tick. Use this for time-bounded obligations: certificate/permit renewals, contractor access grants/revocations, anything keyed off "this asset's date is approaching."
+
+```yaml
+triggers:
+  - type: asset_expiry
+    schema: "Calibration Record"   # asset schema name to watch
+    date_role: expires_at          # or effective_from
+    offset_days: 30                # fire 30 days before the date (0 = on the day)
+```
+
+The asset's `properties.owner_email` (approver), `properties.expires_at`/`effective_from` (the date), and its own `name` column (subject/display label) are what the fired instance's form is seeded from — no other schema configuration is required; these are fixed conventions, not something declared elsewhere.
+
+`schema` and `date_role` define *what* the trigger watches — treat them as fixed once authored, the same way you wouldn't change a `cron` trigger's meaning by editing its `schedule` to point at a different workflow's concern. Only `offset_days` is meant to be tuned per install.
+
 ### Trigger Fields
 
 | Field | Required | Description |
 |-------|----------|-------------|
-| `type` | ✅ Yes | `cron`, `webhook`, or `one_time` |
+| `type` | ✅ Yes | `cron`, `webhook`, `one_time`, or `asset_expiry` |
 | `schedule` | For `cron`/`one_time` | Cron expression, e.g. `0 9 * * *` for daily 9 AM |
 | `max_runs` | No | Auto-pause after N executions |
 | `allow_concurrent` | No | `false` (default) — skip run if a previous instance from this trigger is still in progress. Set `true` to allow overlap. |
@@ -148,6 +163,9 @@ triggers:
 | `requestor_email` | No | Email of the employee to treat as submitter |
 | `requestor_company_role` | No | **Recommended for scheduled workflows** — the first active employee with this `company_role` becomes the submitter |
 | `data_condition` | No | Fetch external data and only launch if changes are detected |
+| `schema` | For `asset_expiry` | Name of the asset schema to watch |
+| `date_role` | For `asset_expiry` | `expires_at` or `effective_from` — which promoted date column to check |
+| `offset_days` | For `asset_expiry` | Days before the date to fire; `0` fires on the day itself |
 
 ### Best Practice: Use `requestor_company_role` for Ownership
 
@@ -202,6 +220,7 @@ triggers:
 
 - User says "every hour", "daily", "nightly", "weekly", "every Monday", "on a schedule" → `type: cron`
 - User says "when an event occurs", "when data arrives", "via API", "incoming webhook" → `type: webhook`
+- User says "when a certificate/permit/contract expires", "before this date", "renewal reminder", "when access should be revoked/granted based on a date" → `type: asset_expiry`
 - User says nothing about scheduling or events (manual form submission) → **omit** triggers entirely
 
 ### Cron workflows and form fields
@@ -1802,6 +1821,37 @@ fetch_iam_data:
 - `compare_to_asset`: Asset name to compare fetched data against (uses deepdiff)
 - `save_diff_to`: Variable to store the diff result string (`"None"` if no changes, or descriptive summary)
 - `ignore_keys`: Top-level keys to exclude from comparison
+- `verify`: Optional target-state check consulted only when a retry resumes a genuinely ambiguous prior attempt (the process crashed between the external call and recording its outcome — not a normal failure). See "Target-State Verification (`verify:`)" below.
+
+#### Target-State Verification (`verify:`)
+
+An optional block on `data_processor`/`data_source` that reconciles against the real external state before blindly re-running a step's side effect on retry — "did this already happen?" instead of "assume it didn't."
+
+```yaml
+provision_user:
+  type: automatic
+  data_source:
+    source_name: "Odoo Create User"
+    save_to: create_result
+    params:
+      - name: email
+        from_field: field.email
+    verify:
+      check:
+        source_name: "Odoo Get User By Email"   # any data source — same source_id/source_name + params resolution
+        params:
+          - name: email
+            from_field: field.email
+      matches: "$exists(data[0]) and data[0].active = true"   # JSONata boolean, evaluated against the check's raw result
+  on_complete:
+    continue_to: notify
+```
+
+**How it fires:** only when the step-execution idempotency ledger shows a `pending` attempt with no recorded outcome — meaning a prior attempt crashed mid-flight and it's genuinely unknown whether the write landed. A clean failure never reaches `verify:` (it's already known not to have happened); a clean success is caught earlier by the ledger's own succeeded-attempt guard. If `verify:` is absent, or `matches` doesn't match, the engine falls back to re-running the step exactly as it did before this feature existed — `verify:` is fully optional and changes nothing for a step that doesn't declare it.
+
+**`verify` properties:**
+- `check` (required): a data-source config using the same `source_id`/`source_name` + `params` resolution as the step's own fetch — points at a query that returns the current state of whatever the step just tried to write
+- `matches` (required): a JSONata boolean expression evaluated against `check`'s raw result. The author encodes create/update/delete semantics themselves — e.g. `$exists(data[0])` for a create, `$count(data) = 0` for a delete — the engine has no built-in CRUD vocabulary
 
 **Params — source options:**
 - `from_field: field.<name>` — reads a value from a workflow form field or variable
@@ -3387,6 +3437,23 @@ FIELD_TYPES = {
     "radio": {"required_props": ["options"], "validation": ["required"], "optional_props": ["display_as"]},
     "file_upload": {"validation": ["accept", "multiple", "max_size", "max_files"], "optional_props": ["capture"]},
     "signature": {"validation": ["required"], "optional_props": ["initial", "label"]},
+    "typst_preview": {
+        "validation": [],
+        "required_props": ["render_step"],
+        "optional_props": ["label"],
+        "description": (
+            "Display-only \"Preview Document\" button. Compiles the named `render_step`'s "
+            "typst_render config with the form's current (possibly partial) data and opens "
+            "the resulting PDF — click-to-render, not live-as-you-type. Never markable "
+            "required; has no value of its own to submit."
+        ),
+        "yaml_example": (
+            "- name: contract_preview\n"
+            "  type: typst_preview\n"
+            "  label: \"Preview Contract\"\n"
+            "  render_step: render_contract   # name of the automatic step whose typst_render config to compile"
+        )
+    },
     "json": {
         "validation": ["required"],
         "optional_props": ["display_as", "default_value"],
@@ -3546,7 +3613,7 @@ STEP_TYPES = {
     },
     "automatic": {
         "required_props": ["on_complete"],
-        "optional_props": ["api", "data_processor", "asset", "field_mapping", "loop", "on_failure"],
+        "optional_props": ["api", "data_processor", "asset", "field_mapping", "loop", "on_failure", "typst_render"],
         "requires_one_of": ["api", "data_processor", "asset", "field_mapping"],
         "field_mapping_description": (
             "Extracts and transforms values from webhook payloads or API responses into form fields. "
@@ -3558,12 +3625,47 @@ STEP_TYPES = {
         ),
         "data_processor_props": {
             "required": ["source_name", "save_to"],
-            "optional": ["compare_to_asset", "save_diff_to", "ignore_keys", "field_mapping", "output_schema"]
+            "optional": ["compare_to_asset", "save_diff_to", "ignore_keys", "field_mapping", "output_schema", "verify"]
+        },
+        "verify_props": {
+            "required": ["check", "matches"],
+            "description": (
+                "Target-state verification, consulted only when a retry resumes a "
+                "genuinely ambiguous prior attempt (a crash between the external call "
+                "and recording its outcome) — not on a normal failure or a normal "
+                "first run. `check` is a data-source config (same source_id/"
+                "source_name + params resolution as data_processor itself) pointed at "
+                "a query for the current state of whatever the step just tried to "
+                "write. `matches` is a JSONata boolean evaluated against check's raw "
+                "result — the author encodes create/update/delete semantics "
+                "themselves (e.g. `$exists(data[0])` for a create, `$count(data) = 0` "
+                "for a delete). If matches is true, the write is treated as already "
+                "done and is not re-run. Omitting verify entirely (the default) falls "
+                "back to re-running the step, unchanged from before this feature "
+                "existed — only add verify to a step where re-running its side effect "
+                "would be unsafe if it actually already succeeded."
+            )
         },
         "asset_props": {
             "required": ["asset_name"],
             "one_of": [["data_from"], ["data_to"], ["merge_from"], ["fields_to"], ["fields_from"]],
             "optional": ["field"]
+        },
+        "typst_render_props": {
+            "required": ["template_asset", "save_to"],
+            "optional": ["data_from", "template_field"],
+            "description": (
+                "Compiles a company-owned `.typ` template asset (Document Templates asset "
+                "schema) into a PDF, merging in `data_from` (template variable → form field "
+                "name, resolved directly against request_data). Any mapped field whose value "
+                "is a captured signature image is placed into the template like any other "
+                "input. The compiled PDF is written to the form field named by `save_to` in "
+                "the same {file_path, original_name, content_type} shape a file_upload field "
+                "uses, so a following `asset_file:` step can store it with no extra wiring. "
+                "`template_field` optionally names the exact asset field holding the template "
+                "file — only needed when the template asset has more than one file_upload "
+                "field; without it, the first file field found is used."
+            )
         }
     },
     "asset": {
@@ -3678,7 +3780,7 @@ STEP_TYPES = {
     },
     "end": {
         "required_props": [],
-        "optional_props": ["metadata", "notify_requestor", "notify_completion", "archive", "return_pdf"],
+        "optional_props": ["metadata", "notify_requestor", "notify_completion", "archive", "return_pdf", "submit_workflow"],
         "description": (
             "Terminates the workflow (approved, or rejected if the step name contains 'reject'). "
             "'notify_completion' (boolean, default true) controls the automatic completion PDF "
@@ -3690,7 +3792,13 @@ STEP_TYPES = {
             "list queries and the monthly instance-quota count. 'return_pdf' (boolean, default "
             "false) renders and returns the completion PDF inline in the response to a synchronous "
             "external API caller (e.g. a token-exchange trigger) instead of only emailing it — only "
-            "takes effect when this exact end step is reached without pausing on a human step."
+            "takes effect when this exact end step is reached without pausing on a human step. "
+            "'submit_workflow' (workflow name, e.g. \"Employee Onboarding\") auto-starts that "
+            "workflow immediately after this instance completes, passing this instance's own "
+            "request_data as the new instance's form_data (matched by field name) and stamping "
+            "metadata.source_instance_id — the same start_workflow entry point cron/webhook/manual "
+            "submission already uses, decoupled from this instance's own lifecycle (not a spawn: "
+            "the new instance runs independently and does not block or get blocked by this one)."
         )
     }
 }

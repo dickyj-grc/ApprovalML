@@ -9,6 +9,8 @@ from typing import Any, Literal, Optional, Union
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, ValidationInfo, field_validator, model_validator
 
+from .triggers import UnknownTriggerTypeError, default_registry
+
 
 class FieldType(str, Enum):
     TEXT = "text"
@@ -313,7 +315,7 @@ class OptionsFromAssetCategory(BaseModel):
     (GET /assets?category=...), instead of a hardcoded options: list or an external
     data_source connector. See docs/spawn_provisioning.md's "Bulk Onboarding at Scale"
     for the motivating case: a dropdown of actually-registered apps from app_registry."""
-    asset_category: str   # e.g. "app_registry"
+    asset_category: str   # e.g. "access_app_registry"
     value_field: str      # property key on each asset providing the option value
     label_field: Optional[str] = None  # property key on each asset providing the option label (defaults to value_field)
     filter_field: Optional[str] = None  # keep assets whose properties[filter_field] equals filter_value
@@ -1285,12 +1287,13 @@ class DataConditionConfig(BaseModel):
 class TriggerConfig(BaseModel):
     """Individual trigger configuration within a workflow YAML.
 
-    Supports three trigger types:
-    - cron: Recurring schedule (requires 'schedule' field with cron expression)
-    - webhook: External HTTP POST trigger (webhook token auto-generated)
-    - one_time: Single execution at a scheduled time
+    `type` is an open string dispatched through the trigger adapter
+    registry (approvalml.triggers). The TriggerType enum below remains as
+    the canonical values for the built-in types; app-registered types
+    (e.g. asset_expiry) parse as plain strings and delegate validation to
+    their adapter.
     """
-    type: TriggerType
+    type: str
     schedule: Optional[str] = None                          # Cron expression (required for cron type)
     max_runs: Optional[int] = None                          # Maximum number of executions (null = unlimited)
     allow_concurrent: Optional[bool] = None                 # If False (default), skip run when previous instance is still in_progress.
@@ -1362,15 +1365,20 @@ class TriggerConfig(BaseModel):
 
     @model_validator(mode='after')
     def validate_trigger_type_requirements(self):
-        """Validate that required fields are present based on trigger type."""
-        if self.type == TriggerType.CRON and not self.schedule:
-            raise ValueError("Cron triggers must have a 'schedule' field with a valid cron expression")
-        if self.type == TriggerType.WEBHOOK and self.schedule:
-            raise ValueError("Webhook triggers should not have a 'schedule' field")
-        if self.type == TriggerType.ONE_TIME and not self.schedule:
-            raise ValueError("One-time triggers must have a 'schedule' field with a datetime or cron expression")
-        if self.max_runs is not None and self.max_runs < 1:
-            raise ValueError("max_runs must be at least 1")
+        """Delegate per-type requirements to the registered trigger adapter.
+
+        Unknown types fail loudly here — in the standalone package only the
+        built-in adapters are registered, so app-only types (e.g.
+        asset_expiry) surface a clear "no adapter registered" error unless
+        the app registers its adapters into the default registry.
+        """
+        try:
+            adapter_class = default_registry.get(self.type)
+        except UnknownTriggerTypeError as exc:
+            raise ValueError(str(exc)) from exc
+        for issue in adapter_class.validate(self.model_dump()):
+            if issue.severity == "error":
+                raise ValueError(issue.message)
         return self
 
 
