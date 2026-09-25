@@ -94,7 +94,9 @@ dashboard and is what layout.sections[].grid/.columns reference.
 Common fields (all tile types):
   id            Required, unique.
   type          Required — table | stat | bar_chart | scatter | line_chart.
-  label         Optional display title.
+  label         Structurally optional in the schema, but ALWAYS set it in practice — a short,
+                  human-readable title (e.g. "Total Revenue"). A tile with no label renders
+                  with no visible title in the viewer, which is never actually intended.
   data_processor  The same DataSourceConfig shape workflow `automatic` steps use — source_id or
                   source_name, params[], join[]. Use for any connector-backed tile.
   source        `{ type: asset, category: <str> }` — native asset-registry tile (see below).
