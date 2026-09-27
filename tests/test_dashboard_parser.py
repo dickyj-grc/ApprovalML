@@ -11,7 +11,7 @@ Run with: pytest tests/test_dashboard_parser.py -v
 """
 
 import pytest
-from approvalml.parser import Dashboard, DataSourceParameterMapping, parse_dashboard_yaml
+from approvalml.parser import Dashboard, DashboardTile, DataSourceParameterMapping, parse_dashboard_yaml
 
 # @lat: [[dashboards#YAML schema and parser#Full example parses]]
 VALID_DASHBOARD = """
@@ -215,3 +215,32 @@ def test_from_control_is_a_valid_parameter_mapping_source():
 def test_parameter_mapping_rejects_multiple_sources():
     with pytest.raises(Exception):
         DataSourceParameterMapping(name="x", from_control="date_from", value="literal")
+
+
+# @lat: [[dashboards#Per-viewer personalization: tile view_roles and from_viewer]]
+def test_from_viewer_is_a_valid_parameter_mapping_source():
+    """Same shared-model contract as from_control: the parser allows from_viewer generically;
+    rejecting it for workflows specifically is the yaml_validator's job, not the parser's."""
+    mapping = DataSourceParameterMapping(name="x", from_viewer="employee_id")
+    assert mapping.from_viewer == "employee_id"
+
+
+def test_from_viewer_rejects_unknown_field():
+    with pytest.raises(Exception):
+        DataSourceParameterMapping(name="x", from_viewer="not_a_real_field")
+
+
+def test_parameter_mapping_rejects_from_control_and_from_viewer_together():
+    with pytest.raises(Exception):
+        DataSourceParameterMapping(name="x", from_control="date_from", from_viewer="email")
+
+
+def test_tile_view_roles_defaults_to_none_and_can_be_set():
+    bare = DashboardTile(id="t1", type="table", source={"type": "asset", "category": "server"},
+                          columns=[{"label": "Name", "path": "name"}])
+    assert bare.view_roles is None
+
+    scoped = DashboardTile(id="t2", type="table", view_roles=["admin", "auditor"],
+                            source={"type": "asset", "category": "server"},
+                            columns=[{"label": "Name", "path": "name"}])
+    assert scoped.view_roles == ["admin", "auditor"]

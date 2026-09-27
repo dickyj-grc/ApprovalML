@@ -748,18 +748,22 @@ class DataSourceParameterMapping(BaseModel):
                                         # Workflows have no control_values at runtime — the workflow YAML validator
                                         # (yaml_validator.py) rejects this variant there; only the parser allows it
                                         # generically since this model is shared between workflow steps and tiles.
+    from_viewer: Optional[Literal["employee_id", "email"]] = None  # Dashboard-only: the live viewer executing
+                                        # the tile (never resolved for a scheduled subscription's created_by_id
+                                        # run, or for a workflow step) — same dashboard-only restriction and
+                                        # rationale as from_control, enforced the same way (yaml_validator.py).
 
     @model_validator(mode='after')
     def validate_has_source(self):
         """Ensure exactly one source is provided"""
-        sources = [s for s in (self.from_field, self.from_asset, self.value, self.from_control) if s is not None]
+        sources = [s for s in (self.from_field, self.from_asset, self.value, self.from_control, self.from_viewer) if s is not None]
         if len(sources) == 0:
             raise ValueError(
-                f"Parameter '{self.name}' must have one of: 'from_field', 'from_asset', 'from_control', or 'value'"
+                f"Parameter '{self.name}' must have one of: 'from_field', 'from_asset', 'from_control', 'from_viewer', or 'value'"
             )
         if len(sources) > 1:
             raise ValueError(
-                f"Parameter '{self.name}' must have only one of: 'from_field', 'from_asset', 'from_control', or 'value'"
+                f"Parameter '{self.name}' must have only one of: 'from_field', 'from_asset', 'from_control', 'from_viewer', or 'value'"
             )
         return self
 
@@ -1664,6 +1668,12 @@ class DashboardTile(BaseModel):
     id: str
     type: Literal["table", "stat", "bar_chart", "scatter", "line_chart"]
     label: Optional[str] = None  # Tile display title
+    view_roles: Optional[list[str]] = None  # Narrows Dashboard.view_roles for this one tile —
+                                             # absent means "inherit the dashboard's own view_roles",
+                                             # not "visible to no one". Admin and the dashboard's
+                                             # creator can always see every tile, same bypass as
+                                             # Dashboard.view_roles itself (see dashboards.py's
+                                             # _can_view_tile).
 
     # Exactly one of these two is required — see validate_source_specification
     data_processor: Optional[DataSourceConfig] = None

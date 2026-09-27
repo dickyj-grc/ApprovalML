@@ -204,8 +204,8 @@ source: {type: asset} tiles have NO row_path (result is already [{name, properti
 Assets UI itself.
 
 DATA PROCESSOR PARAMETERS — data_processor.params[] reuses the workflow DataSourceParameterMapping
-shape, plus one dashboard-only source. Each entry needs EXACTLY ONE of from_field, from_asset
-(+ optional property), value, or from_control:
+shape, plus two dashboard-only sources. Each entry needs EXACTLY ONE of from_field, from_asset
+(+ optional property), value, from_control, or from_viewer:
   data_processor:
     params:
       - name: date_from
@@ -217,6 +217,26 @@ shape, plus one dashboard-only source. Each entry needs EXACTLY ONE of from_fiel
         property: $.last_cursor
       - name: api_version
         value: "v3"
+      - name: member_email
+        from_viewer: email          # dashboard-only — the live viewer executing this tile.
+                                     # employee_id or email. Use this to personalize a tile per
+                                     # viewer (e.g. "rows where I am a member") instead of
+                                     # showing every viewer the same unscoped data — the native
+                                     # asset source (above) already gets per-viewer row scoping
+                                     # for free via owner_id/view_roles, so from_viewer is mainly
+                                     # for a data_processor tile that needs the same effect.
+
+TILE-LEVEL VIEW_ROLES — a tile can narrow who sees IT specifically, separate from the dashboard's
+own view_roles (which gates the whole document). Omit it to inherit the dashboard's view_roles;
+set it to restrict this one tile further (e.g. an admin-only aggregate next to a personalized
+per-viewer tile in the same dashboard):
+  tiles:
+    - id: everyone_trend
+      type: bar_chart
+      view_roles: [admin, auditor]   # only these roles (+ admin + the dashboard's own creator,
+                                      # always) can see/execute this tile; every other viewer of
+                                      # the dashboard never receives it in the tile list at all
+      ...
 
 CROSS-SOURCE JOINS — data_processor.join[] is the identical batch-fetch-then-lookup mechanism
 workflow automatic steps use, extended with `source_type: asset` to join against the asset
