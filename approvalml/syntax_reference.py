@@ -3613,8 +3613,8 @@ STEP_TYPES = {
     },
     "automatic": {
         "required_props": ["on_complete"],
-        "optional_props": ["api", "data_processor", "asset", "field_mapping", "loop", "on_failure", "typst_render"],
-        "requires_one_of": ["api", "data_processor", "asset", "field_mapping"],
+        "optional_props": ["api", "data_processor", "asset", "field_mapping", "loop", "on_failure", "typst_render", "roster_classify", "roster_apply"],
+        "requires_one_of": ["api", "data_processor", "asset", "field_mapping", "roster_classify", "roster_apply"],
         "field_mapping_description": (
             "Extracts and transforms values from webhook payloads or API responses into form fields. "
             "Supports three types: (1) Simple JSONPath extraction: { field: '$.path' }, "
@@ -3623,6 +3623,21 @@ STEP_TYPES = {
             "JSONata enables string operations, regex, math, and conditionals. "
             "e.g. { product_name: { source: '$.product.name', jsonata: '$replace(value, /\\\\[\\\\d+\\\\]\\\\s*/, \"\")' } }"
         ),
+        "roster_classify_props": {
+            "required": ["live_rows_from", "save_to"],
+            "description": (
+                "Compare fetched directory rows with employees, shared accounts, and prior dismissals. "
+                "Writes unknown addresses to save_to. Does not insert them."
+            ),
+        },
+        "roster_apply_props": {
+            "required": ["rows_from"],
+            "optional": ["force_reject"],
+            "description": (
+                "Save reviewer decisions. Approved rows become employees or shared-account grants. "
+                "Rejected rows, or force_reject, store a dismissal and do not change the directory."
+            ),
+        },
         "data_processor_props": {
             "required": ["source_name", "save_to"],
             "optional": ["compare_to_asset", "save_diff_to", "ignore_keys", "field_mapping", "output_schema", "verify"]
