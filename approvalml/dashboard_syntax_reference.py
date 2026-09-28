@@ -204,14 +204,13 @@ source: {type: asset} tiles have NO row_path (result is already [{name, properti
 Assets UI itself.
 
 DATA PROCESSOR PARAMETERS — data_processor.params[] reuses the workflow DataSourceParameterMapping
-shape, plus two dashboard-only sources. Each entry needs EXACTLY ONE of from_field, from_asset
-(+ optional property), value, from_control, or from_viewer:
+shape, plus two dashboard-only sources. Each entry needs EXACTLY ONE of from_control, from_viewer,
+from_asset (+ optional property), or value. NEVER use from_field in a dashboard — it reads a
+workflow request's form fields, a dashboard has none, and the validator rejects it:
   data_processor:
     params:
       - name: date_from
         from_control: date_from     # dashboard-only — reads a control's resolved value
-      - name: project_id
-        from_field: field.project_id
       - name: cursor
         from_asset: sync-checkpoint
         property: $.last_cursor
