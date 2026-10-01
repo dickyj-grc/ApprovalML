@@ -29,7 +29,7 @@ controls: []                                 # Optional — filter widgets
 tiles: []                                    # Required, at least one, unique ids
 layout:                                      # Required — placement
   sections: []
-subscriptions: []                            # Optional — scheduled email delivery (schema only, not yet executed)
+subscriptions: []                            # Optional — scheduled email delivery of the tiles
 
 CONTROLS — dashboard-level filter widgets. A tile's data_processor.params[] reads a
 control's resolved value via `from_control: <name>`. controls[].name must be unique and
@@ -204,14 +204,13 @@ source: {type: asset} tiles have NO row_path (result is already [{name, properti
 Assets UI itself.
 
 DATA PROCESSOR PARAMETERS — data_processor.params[] reuses the workflow DataSourceParameterMapping
-shape, plus two dashboard-only sources. Each entry needs EXACTLY ONE of from_field, from_asset
-(+ optional property), value, from_control, or from_viewer:
+shape, plus two dashboard-only sources. Each entry needs EXACTLY ONE of from_control, from_viewer,
+from_asset (+ optional property), or value. NEVER use from_field in a dashboard — it reads a
+workflow request's form fields, a dashboard has none, and the validator rejects it:
   data_processor:
     params:
       - name: date_from
         from_control: date_from     # dashboard-only — reads a control's resolved value
-      - name: project_id
-        from_field: field.project_id
       - name: cursor
         from_asset: sync-checkpoint
         property: $.last_cursor
@@ -329,7 +328,9 @@ dashboards particularly well since tiles are commonly mixed-height:
 Every tile id referenced by a section must exist in `tiles`; every tile should normally appear
 in at least one section or it will never be visible.
 
-SUBSCRIPTIONS (schema only — delivery not implemented yet, but the shape is validated):
+SUBSCRIPTIONS — emails a digest of the tiles on a cron schedule. Each recipient only gets the tiles
+they may see: a tile's own view_roles applies per recipient, and from_viewer / source: asset tiles
+are rendered per recipient with their own data (omitted for a bare external email):
   subscriptions:
     - name: "Monday Morning Digest"
       schedule: "0 8 * * 1"           # cron syntax, same as workflow triggers
