@@ -332,6 +332,11 @@ workflow request's form fields, a dashboard has none, and the validator rejects 
                                      # for free via owner_id/view_roles, so from_viewer is mainly
                                      # for a data_processor tile that needs the same effect.
 
+A multi-value select resolves to a LIST. A data source param shown as `name (csv list)` (its
+placeholder is `{{name:csv}}`) wants exactly that — the list is sent as "a,b". Wire it with
+`- name: name` + `from_control: <a select with multiple: true>` (the param name has no suffix).
+Never feed a single-value control into a csv param, nor a list into a plain one-value param.
+
 TILE-LEVEL VIEW_ROLES — a tile can narrow who sees IT specifically, separate from the dashboard's
 own view_roles (which gates the whole document). Omit it to inherit the dashboard's view_roles;
 set it to restrict this one tile further (e.g. an admin-only aggregate next to a personalized
@@ -366,8 +371,8 @@ field WITHOUT an index (pick: product_id) returns the raw [id, name] pair string
 value (e.g. "[2778, 'Widget']") — almost never what's wanted; index into it instead.
 
 This '.1'/'.0' dot-index convention belongs to field/on/pick ONLY. Never carry it into an actual
-JSONata expression (row_path, filter, x, y, columns[].path, series[].path, settings.metric/
-compare_metric) — a digit can't follow '.' as a JSONata path step ("The literal value N cannot
+JSONata expression (row_path, filter, x, y, value, time, headline, detail, columns[].path,
+series[].path, settings.metric/compare_metric/target_metric) — a digit can't follow '.' as a JSONata path step ("The literal value N cannot
 be used as a step within a path expression"). Use bracket indexing there instead: product_id[1],
 never product_id.1.
 
@@ -419,8 +424,10 @@ omitted) are evaluated as ONE JSONata expression against the WHOLE extracted row
   rows{region: $sum(amount)}                                 -> group-by, {"US": 700, "EU": 900}
 `agg: sum|avg|count|min|max` remains as optional shorthand for the common single-plain-field
 case. Per-row context: table.columns[].path, scatter.x/y/size/point_label, bar_chart.x,
-line_chart.x/series[].path. Whole-set context: stat.settings.metric/compare_metric, bar_chart.y
-(only when agg: is absent).
+line_chart.x/series[].path, pie_chart.x, funnel.x, heatmap.x/y/value, timeline.time/headline/
+detail. Whole-set context (per x group for the grouped types): stat.settings.metric/
+compare_metric/target_metric, and bar_chart.y/series[].path, pie_chart.y, funnel.y — those last
+three only when agg: is absent; with agg: they are plain per-row fields reduced by agg.
 
 LAYOUT — reuses the exact workflow form.layout.sections shape, pointing grid/columns cells at
 tile ids instead of form field names. `columns` mode (independent vertical stacks) suits
@@ -461,12 +468,19 @@ def get_dashboard_syntax_reference(stat_templates: Optional[List[Dict[str, Any]]
 
 def _render_stat_templates_section(stat_templates: Optional[List[Dict[str, Any]]]) -> str:
     if not stat_templates:
+        # Static fallback for callers that don't pass the live registry — keep in step with
+        # src/app/services/stat_templates/ (the endpoint always passes the live catalog).
         return (
             "STAT TILE TEMPLATES\n"
-            "  kpi_badge — settings: layout (inline|badge|value_first|historical, default inline), "
-            "format (number|currency|percent, default number), metric (required, JSONata), "
-            "agg (sum|avg|count|min|max, optional shorthand), compare_metric (optional), "
-            "compare_label (optional), higher_is_better (default true)."
+            "  kpi_badge — a number with change vs. a comparison. settings: layout (inline|badge|"
+            "value_first|historical, default inline), format (number|currency|percent, default number), "
+            "metric (required, JSONata), agg (sum|avg|count|min|max, optional shorthand), compare_metric "
+            "(optional), compare_label (optional), higher_is_better (default true).\n"
+            "  progress — a number toward a target. settings: metric (required), agg (optional), EXACTLY "
+            "ONE of target (number) or target_metric (JSONata), format (default number), "
+            "higher_is_better (default true; false when exceeding the target is bad).\n"
+            "  gauge — a number on a min..max dial. settings: metric (required), agg (optional), "
+            "min (default 0), max (required, > min), format (default number), higher_is_better (default true)."
         )
     lines = ["STAT TILE TEMPLATES — a stat tile's `template:` must be one of these names, and its "
              "`settings:` must match that template's own schema:"]
@@ -475,10 +489,29 @@ def _render_stat_templates_section(stat_templates: Optional[List[Dict[str, Any]]
         schema = tpl.get("settings_schema") or {}
         props = schema.get("properties") or {}
         required = set(schema.get("required") or [])
+        # First docstring paragraph only — the rest is implementation notes, not authoring guidance.
+        summary = " ".join((schema.get("description") or "").split("\n\n")[0].split()).rstrip(".")
         prop_lines = []
         for prop_name, prop_def in props.items():
             marker = "required" if prop_name in required else "optional"
-            desc = prop_def.get("description") or prop_def.get("title") or ""
-            prop_lines.append(f"      {prop_name} ({marker}): {desc}".rstrip())
-        lines.append(f"  {name}:\n" + "\n".join(prop_lines))
+            details = [marker]
+            choices = _schema_enum(prop_def)
+            if choices:
+                details.append("|".join(str(c) for c in choices))
+            if "default" in prop_def and prop_def["default"] is not None:
+                details.append(f"default {prop_def['default']}")
+            desc = prop_def.get("description") or ""
+            prop_lines.append(f"      {prop_name} ({', '.join(details)}){': ' + desc if desc else ''}")
+        header = f"  {name}" + (f" — {summary}" if summary else "") + ":"
+        lines.append(header + "\n" + "\n".join(prop_lines))
     return "\n".join(lines)
+
+
+def _schema_enum(prop_def: Dict[str, Any]) -> List[Any]:
+    """Enum values of a JSON-schema property, including Optional[Literal[...]] (anyOf)."""
+    if prop_def.get("enum"):
+        return list(prop_def["enum"])
+    for option in prop_def.get("anyOf") or []:
+        if option.get("enum"):
+            return list(option["enum"])
+    return []
