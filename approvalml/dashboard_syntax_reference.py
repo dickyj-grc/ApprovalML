@@ -78,7 +78,9 @@ only on number/number_range; `options` only on select/date_range_preset. Free-te
 not exist — never invent one.
 
 date_range_preset known option values: last_7_days, last_30_days, this_month, last_month,
-this_quarter, last_quarter, this_year. Any other value is a validation error. When applied,
+this_quarter, last_quarter, this_year (looking back), and next_7_days, next_30_days,
+next_60_days, next_90_days (today → today + N, for expiries / renewals / due dates). Any other
+value is a validation error. When applied,
 it expands into two derived control values before tile params resolve: `{name}_from` and
 `{name}_to` — target those with from_control, not the raw preset name, when a tile needs
 concrete dates:
@@ -122,6 +124,7 @@ neither (static content).
 
 PICKING A TYPE — choose by what the tile must show, and prefer an option over a new type:
   one number ............ stat (kpi_badge: with change; progress: toward a target; gauge: min..max)
+  a number with context . summary_card (headline + up to 4 coloured boxes + most-critical row + button)
   trend over time ....... line_chart (area / stacked)
   compare categories .... bar_chart (series + stacked, horizontal); heatmap for two categories
   share of a whole ...... pie_chart (donut); funnel for ordered stage drop-off
@@ -134,7 +137,7 @@ dashboard and is what layout.sections[].grid/.columns reference.
 Common fields (all tile types):
   id            Required, unique.
   type          Required — table | stat | bar_chart | scatter | line_chart | pie_chart | funnel |
-                  heatmap | timeline | text.
+                  heatmap | timeline | text | summary_card.
   label         Structurally optional in the schema, but ALWAYS set it in practice — a short,
                   human-readable title (e.g. "Total Revenue"). A tile with no label renders
                   with no visible title in the viewer, which is never actually intended.
@@ -305,6 +308,57 @@ Common fields (all tile types):
   content: |
     Spend is **approved** spend only. Figures refresh on every load.
 
+### summary_card
+  A headline number with up to 4 coloured breakdown boxes, the single most important row and an
+  action button — e.g. one card per asset type on an expiry dashboard. All metrics are whole-set
+  JSONata over {rows} (after `filter`); highlight fields are per-row on the chosen row.
+  headline: { metric, caption? }                 # Required (an OBJECT here — `headline` on a
+                                                 #   timeline is a per-row expression string)
+  badge: { metric, suffix? }                     # optional, top-right, e.g. "86 tracked"
+  breakdown: [ { label, metric, tones? } ]       # optional, at most 4
+  tones: { error|warning|success: n }  → that colour when value >= n
+         { error_below|warning_below|success_below: n } → when value < n
+         checked error → warning → success; no match = neutral. Named colours only, never hex.
+  highlight: { title?, sort_by, sort_order? (asc), name, detail?, tag?: {value, suffix?, tones?},
+               link?: asset | href? }            # first row after sorting by sort_by; rows whose
+                                                 #   sort_by is null are skipped
+    link: asset     → the name opens that asset (source: asset tiles only)
+    href: "/path/{{field}}" or "https://…/{{properties.id}}" → app path or http(s) URL;
+                      {{field}} takes a URL-encoded value from the highlighted row
+  action: { label, href }                        # optional button; app path ("/…") or http(s) URL
+  Asset list links: /activities?tab=assets&category=<category>&q=<text>  (q matches name or any
+  property value); one asset: link: asset.
+- id: api_tokens_card
+  type: summary_card
+  label: "API tokens"
+  source: { type: asset, category: expiry_item }
+  filter: "properties.asset_type = 'api_token'"
+  badge: { metric: "$count(rows)", suffix: "tracked" }
+  headline:
+    metric: "$count(rows[$toMillis(properties.expires_at) < $toMillis($controls.period_to) + 86400000])"
+    caption: "expiring in the selected period"
+  breakdown:
+    - { label: "Owner left the company", metric: "$count(rows[properties.issue = 'owner_left'])", tones: { error: 1 } }
+    - { label: "Unused 90+ days", metric: "$count(rows[properties.issue = 'unused'])", tones: { warning: 1 } }
+  highlight:
+    title: "Most critical"
+    sort_by: "properties.expires_at"
+    name: "name"
+    detail: "properties.note"
+    tag: { value: "$round(($toMillis(properties.expires_at) - $millis()) / 86400000)", suffix: "days",
+           tones: { error_below: 7, warning_below: 30 } }
+    link: asset
+  action: { label: "Review API tokens", href: "/activities?tab=assets&category=expiry_item&q=API%20token" }
+
+CONTROL VALUES IN EXPRESSIONS — every JSONata expression in a tile (filter, row_path, metric,
+x/y, columns, summary_card fields…) can read the dashboard's resolved control values as
+`$controls.<name>`, including derived range keys (`$controls.period_from`, `$controls.period_to`,
+`$controls.price_min`). This is the ONLY way a control can affect a `source: asset` tile (asset
+tiles take no params). Compare dates as millis, e.g.
+  filter: "$toMillis(properties.expires_at) < $toMillis($controls.period_to) + 86400000"
+A `$controls.<name>` that isn't a control is a validation error; a tile reading an unset control
+is held back until the viewer picks a value, so give such controls a default.
+
 NATIVE ASSET SOURCE — company-scoped JSON asset records, no connector needed:
 - id: server_baselines
   type: table
@@ -313,7 +367,7 @@ NATIVE ASSET SOURCE — company-scoped JSON asset records, no connector needed:
   columns:
     - { label: "Name", path: "name" }
     - { label: "OS Version", path: "properties.os_version" }
-source: {type: asset} tiles have NO row_path (result is already [{name, properties}]) and only
+source: {type: asset} tiles have NO row_path (result is already [{uuid, name, properties}]) and only
 `category` filtering (no schema_id/schema_name). Visibility is scoped per-viewer, same as the
 Assets UI itself.
 

@@ -1593,6 +1593,11 @@ DASHBOARD_DATE_RANGE_PRESETS = frozenset({
     "this_quarter",
     "last_quarter",
     "this_year",
+    # Forward-looking — today → today + N days, for expiries, renewals and due dates.
+    "next_7_days",
+    "next_30_days",
+    "next_60_days",
+    "next_90_days",
 })
 
 
@@ -1701,6 +1706,62 @@ class LineChartSeries(BaseModel):
     path: str
 
 
+class SummaryCardTones(BaseModel):
+    """Value → colour rule for a summary_card box or tag. Checked in order: error, warning,
+    success — each either "value >= n" (`error: 3`) or "value < n" (`error_below: 7`). No match,
+    or a non-numeric value, renders neutral. Colours are a fixed semantic set, never free hex."""
+    error: Optional[float] = None
+    error_below: Optional[float] = None
+    warning: Optional[float] = None
+    warning_below: Optional[float] = None
+    success: Optional[float] = None
+    success_below: Optional[float] = None
+
+
+class SummaryCardBadge(BaseModel):
+    """Small figure in the card's top-right corner, e.g. "86 tracked"."""
+    metric: str                     # whole-set JSONata over {rows}
+    suffix: Optional[str] = None
+
+
+class SummaryCardHeadline(BaseModel):
+    """The card's big number and its caption."""
+    metric: str                     # whole-set JSONata over {rows}
+    caption: Optional[str] = None
+
+
+class SummaryCardBreakdownItem(BaseModel):
+    """One of up to four coloured boxes under the headline."""
+    label: str
+    metric: str                     # whole-set JSONata over {rows}
+    tones: Optional[SummaryCardTones] = None
+
+
+class SummaryCardTag(BaseModel):
+    """A coloured tag next to the highlighted item's name, e.g. "3 days"."""
+    value: str                      # per-row JSONata on the highlighted row
+    suffix: Optional[str] = None
+    tones: Optional[SummaryCardTones] = None
+
+
+class SummaryCardHighlight(BaseModel):
+    """The single most important row — the first after sorting by `sort_by`."""
+    title: Optional[str] = None     # e.g. "Most critical"
+    sort_by: str                    # per-row JSONata; empty values sort last
+    sort_order: Literal["asc", "desc"] = "asc"
+    name: str                       # per-row JSONata
+    detail: Optional[str] = None    # per-row JSONata
+    tag: Optional[SummaryCardTag] = None
+    link: Optional[Literal["asset"]] = None   # `asset`: the name opens that asset (asset-source tiles)
+    href: Optional[str] = None      # or a link template: an app path ("/...") or http(s) URL with {{field}} placeholders
+
+
+class SummaryCardAction(BaseModel):
+    """The button at the bottom of the card."""
+    label: str
+    href: str                       # an app path ("/...") or an http(s) URL
+
+
 class ScatterQuadrantLabels(BaseModel):
     """Region labels for a scatter tile's quadrant overlay, relative to x_threshold/y_threshold."""
     high_high: Optional[str] = None
@@ -1724,7 +1785,7 @@ class DashboardTile(BaseModel):
     id: str
     type: Literal[
         "table", "stat", "bar_chart", "scatter", "line_chart",
-        "pie_chart", "funnel", "heatmap", "timeline", "text",
+        "pie_chart", "funnel", "heatmap", "timeline", "text", "summary_card",
     ]
     label: Optional[str] = None  # Tile display title (kept as `label`, not `title`, for compatibility)
     description: Optional[str] = None  # Optional subtitle shown under the title
@@ -1783,11 +1844,18 @@ class DashboardTile(BaseModel):
 
     # timeline
     time: Optional[str] = None          # per-row JSONata, sortable (ISO date/datetime)
-    headline: Optional[str] = None      # per-row JSONata
+    # timeline: per-row JSONata text. summary_card: {metric, caption} (see SummaryCardHeadline).
+    headline: Optional[Union[str, SummaryCardHeadline]] = None
     detail: Optional[str] = None        # per-row JSONata, optional
 
     # text (no data source)
     content: Optional[str] = None       # markdown subset — headings, bold/italic, links, lists
+
+    # summary_card — a headline number with breakdown boxes, a highlighted row and an action
+    badge: Optional[SummaryCardBadge] = None
+    breakdown: Optional[list[SummaryCardBreakdownItem]] = None
+    highlight: Optional[SummaryCardHighlight] = None
+    action: Optional[SummaryCardAction] = None
 
     @model_validator(mode='after')
     def validate_source_specification(self):
@@ -1827,10 +1895,15 @@ class DashboardTile(BaseModel):
             raise ValueError(f"Tile '{self.id}' of type '{self.type}' requires 'x' and 'y'")
         elif self.type == "heatmap" and (not self.x or not self.y):
             raise ValueError(f"Tile '{self.id}' of type 'heatmap' requires 'x' and 'y'")
-        elif self.type == "timeline" and (not self.time or not self.headline):
+        elif self.type == "timeline" and (not self.time or not isinstance(self.headline, str) or not self.headline):
             raise ValueError(f"Tile '{self.id}' of type 'timeline' requires 'time' and 'headline'")
         elif self.type == "text" and not (self.content or "").strip():
             raise ValueError(f"Tile '{self.id}' of type 'text' requires 'content'")
+        elif self.type == "summary_card":
+            if not isinstance(self.headline, SummaryCardHeadline):
+                raise ValueError(f"Tile '{self.id}' of type 'summary_card' requires 'headline: {{metric, caption}}'")
+            if self.breakdown and len(self.breakdown) > 4:
+                raise ValueError(f"Tile '{self.id}' summary_card 'breakdown' takes at most 4 items")
         return self
 
 
