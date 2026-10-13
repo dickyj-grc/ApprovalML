@@ -1673,10 +1673,26 @@ class DashboardAssetSource(BaseModel):
     category: str
 
 
+DASHBOARD_COLUMN_TYPES = (
+    "text", "bar", "tag", "number", "currency", "percent", "date", "datetime", "relative", "boolean", "link",
+)
+
+
 class DashboardTileColumn(BaseModel):
-    """One column of a `table` tile — label is display text, path is a per-row JSONata expression."""
+    """One column of a `table` tile — label is display text, path is a per-row JSONata expression.
+
+    `type` only changes how a cell is DISPLAYED (viewer and email); the row data, sorting, CSV and
+    Excel export always keep the raw value. Per-type options (`max` for bar, `currency` for
+    currency, `link_text` for link) are rejected on other types by the dashboard validator.
+    """
     label: str
     path: str
+    type: Optional[Literal[
+        "text", "bar", "tag", "number", "currency", "percent", "date", "datetime", "relative", "boolean", "link",
+    ]] = None  # default text
+    max: Optional[float] = None         # bar: fixed scale (e.g. 100); default scales to the column's largest value
+    currency: Optional[str] = None      # currency: ISO 4217 code, default USD
+    link_text: Optional[str] = None     # link: fixed anchor text; default shows the URL
 
 
 class LineChartSeries(BaseModel):
@@ -1750,11 +1766,10 @@ class DashboardTile(BaseModel):
     stacked: Optional[bool] = None      # bar_chart / line_chart: stack series instead of side by side
     horizontal: Optional[bool] = None   # bar_chart: bars run left-to-right
 
-    # table (sort/limit also turn a table into a leaderboard; bar_column draws an inline bar)
+    # table (sort/limit also turn a table into a leaderboard; per-column display lives in columns[].type)
     sort_by: Optional[str] = None       # a columns[].label
     sort_order: Optional[Literal["asc", "desc"]] = None
     limit: Optional[int] = None         # table / timeline: max rows shown
-    bar_column: Optional[str] = None    # a numeric columns[].label rendered with an inline bar
 
     # pie_chart (x/y/agg shared with bar_chart)
     donut: Optional[bool] = None

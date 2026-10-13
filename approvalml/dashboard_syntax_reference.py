@@ -125,7 +125,7 @@ PICKING A TYPE — choose by what the tile must show, and prefer an option over 
   trend over time ....... line_chart (area / stacked)
   compare categories .... bar_chart (series + stacked, horizontal); heatmap for two categories
   share of a whole ...... pie_chart (donut); funnel for ordered stage drop-off
-  ranked list ........... table with sort_by + limit + bar_column (a leaderboard)
+  ranked list ........... table with sort_by + limit and a `type: bar` column (a leaderboard)
   recent events ......... timeline
   notes / headings ...... text
 Type-bound options on any other type are validation errors. `id` must be unique within the
@@ -160,20 +160,27 @@ Common fields (all tile types):
                   row extraction and join enrichment, before type-specific processing. Valid on every type.
 
 ### table
-  columns: [{ label, path }]   # Required, non-empty. path is a per-row JSONata expression.
+  columns: [{ label, path, type? }]  # Required, non-empty. path is a per-row JSONata expression.
   sort_by: <column label>      # Optional — server-side sort; sort_order: desc (default) | asc
   limit: <int>                 # Optional — keep the first N rows after sorting
-  bar_column: <column label>   # Optional — numeric column drawn with an inline bar
+  Column `type` (display only — sorting and CSV/Excel keep the raw value), default text:
+    text | bar (+ optional max: fixed scale, e.g. 100) | tag (chip; a list shows one chip per item)
+    | number | currency (+ optional currency: 3-letter ISO code, default USD) | percent (value 0-100)
+    | date | datetime | relative ("3 hours ago") | boolean (✓/—) | link (http/https, + optional link_text)
+  `max`/`currency`/`link_text` are validation errors on any other column type. There is NO
+  tile-level bar_column — put `type: bar` on the column. Use tag for status/category values,
+  relative for "last updated"-style timestamps, currency/percent/number for figures.
 - id: top_vendors
   type: table
   data_processor: { source_name: "Vendor Spend SQL" }
   row_path: "data"
   columns:
     - { label: "Vendor", path: "vendor.name" }
-    - { label: "Total Spend", path: "totals.amount" }
-  sort_by: "Total Spend"       # with limit + bar_column this is a top-10 leaderboard
+    - { label: "Tier", path: "vendor.tier", type: tag }
+    - { label: "Total Spend", path: "totals.amount", type: bar }
+    - { label: "Last order", path: "last_order_at", type: relative }
+  sort_by: "Total Spend"       # with limit + a bar column this is a top-10 leaderboard
   limit: 10
-  bar_column: "Total Spend"
 
 ### stat
   template: <name>       # Required — must exist in the stat template registry (see STAT TEMPLATES below).
