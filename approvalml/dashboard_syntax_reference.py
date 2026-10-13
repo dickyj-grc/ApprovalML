@@ -48,13 +48,34 @@ controls:
     options:
       - { label: "Growth & Web", value: "growth" }
   - name: severity
-    type: multi_select                        # static options, resolves to a list
+    label: "Severity"
+    type: select
+    multiple: true                            # many values, resolves to a list (shown as tags)
     options:
       - { label: "High", value: "high" }
   - name: timeframe
+    label: "Timeframe"
     type: date_range_preset                   # resolves server-side into {name}_from / {name}_to
+    allow_custom: true                        # optional — adds a Custom from/to tab
     options:
       - { label: "Last 30 Days", value: "last_30_days" }
+  - name: amount
+    label: "Min. amount"
+    type: number                              # optional min / max / step
+    min: 0
+  - name: price
+    label: "Price"
+    type: number_range                        # resolves into {name}_min / {name}_max
+    min: 0
+  - name: include_cancelled
+    label: "Include cancelled"
+    type: toggle                              # true / false
+
+Control types: date | select | date_range_preset | number | number_range | toggle.
+`multi_select` is a legacy alias of `select` + `multiple: true` — prefer the latter.
+`multiple` is only valid on select; `allow_custom` only on date_range_preset; `min`/`max`/`step`
+only on number/number_range; `options` only on select/date_range_preset. Free-text controls do
+not exist — never invent one.
 
 date_range_preset known option values: last_7_days, last_30_days, this_month, last_month,
 this_quarter, last_quarter, this_year. Any other value is a validation error. When applied,
@@ -68,7 +89,10 @@ concrete dates:
       - name: date_to
         from_control: timeframe_to
 
-select/multi_select/date_range_preset all REQUIRE a non-empty options list. `date` requires none.
+select REQUIRES a non-empty options list; date_range_preset does too unless allow_custom: true.
+number_range expands like a preset: target `{name}_min` / `{name}_max` with from_control (a side
+the viewer leaves empty is simply not sent). Viewer-supplied values are validated server-side:
+anything outside options, outside min/max, or of the wrong type is rejected.
 Each option is `{ label, value }`; `label` is optional and falls back to the value, and a bare
 scalar (`- last_7_days`) is accepted as shorthand for `{ value: last_7_days }`. Prefer the full
 `{ label, value }` form so viewers see readable text.
@@ -88,7 +112,9 @@ used to reach the connector broken, so default an unconditionally-required date/
   - name: timeframe
     type: date_range_preset
     default: last_30_days                        # must be one of this control's own options[].value
-multi_select accepts a YAML list as its default (each element must be one of options[].value).
+A multi-value select takes a YAML list as its default (each element one of options[].value);
+number takes a number within min/max; number_range takes { min, max } (either side optional);
+toggle takes true/false.
 
 TILES — every tile is one flat object discriminated by `type`. Each tile needs EXACTLY ONE
 of `data_processor` or `source` — never both, never neither. `id` must be unique within the

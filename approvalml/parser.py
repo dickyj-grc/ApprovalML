@@ -1596,6 +1596,23 @@ DASHBOARD_DATE_RANGE_PRESETS = frozenset({
 })
 
 
+# Control types whose value expands server-side into two derived control_values keys that a
+# tile's from_control may target directly — {name}_from/{name}_to, {name}_min/{name}_max.
+DASHBOARD_RANGE_SUFFIXES: dict[str, tuple[str, str]] = {
+    "date_range_preset": ("_from", "_to"),
+    "number_range": ("_min", "_max"),
+}
+
+DASHBOARD_CONTROL_TYPES = ("date", "select", "multi_select", "date_range_preset", "number", "number_range", "toggle")
+
+
+def dashboard_control_is_multi(control: Any) -> bool:
+    """`select` + `multiple: true` is the canonical multi-value select; `multi_select` is kept as
+    an equivalent alias so existing dashboards keep working."""
+    get = control.get if isinstance(control, dict) else (lambda k, d=None: getattr(control, k, d))
+    return get("type") == "multi_select" or (get("type") == "select" and bool(get("multiple")))
+
+
 class DashboardControlOption(BaseModel):
     """One static option for a select/multi_select/date_range_preset dashboard control.
 
@@ -1630,13 +1647,19 @@ class DashboardControl(BaseModel):
     two-phase validation pattern: parser defines shape, yaml_validator.py enforces business rules).
     """
     name: str
-    type: Literal["date", "select", "multi_select", "date_range_preset"]
+    type: Literal["date", "select", "multi_select", "date_range_preset", "number", "number_range", "toggle"]
     label: Optional[str] = None  # Display text for viewers — name stays the from_control/wire identifier
     options: Optional[list[DashboardControlOption]] = None
+    multiple: Optional[bool] = None       # select only — true makes it multi-value (multi_select is an alias)
+    allow_custom: Optional[bool] = None   # date_range_preset only — adds a "Custom" from/to range
+    min: Optional[Union[int, float]] = None   # number / number_range bounds
+    max: Optional[Union[int, float]] = None
+    step: Optional[Union[int, float]] = None
     default: Optional[Any] = None  # Pre-fills control_values before a tile's first execution — see
     # dashboard_service._apply_control_defaults. type: date accepts "today" (resolved at execute
     # time) or an ISO date string; date_range_preset/select accept one of their own option values;
-    # multi_select accepts a list of them. A control with no default stays unset until the viewer
+    # multi_select (or select + multiple) accepts a list of them; number a number; number_range
+    # {min, max}; toggle a bool. A control with no default stays unset until the viewer
     # picks a value, and tiles that need it are held back rather than executed with it missing.
 
 
