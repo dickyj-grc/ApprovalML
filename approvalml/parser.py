@@ -1597,9 +1597,26 @@ DASHBOARD_DATE_RANGE_PRESETS = frozenset({
 
 
 class DashboardControlOption(BaseModel):
-    """One static option for a select/multi_select/date_range_preset dashboard control."""
-    label: str
+    """One static option for a select/multi_select/date_range_preset dashboard control.
+
+    'label' is optional and falls back to str(value); a bare scalar (``- last_7_days``) is
+    accepted as shorthand for ``{value: last_7_days, label: last_7_days}``.
+    """
+    label: Optional[str] = None
     value: Any
+
+    @model_validator(mode='before')
+    @classmethod
+    def _coerce_shorthand(cls, data: Any) -> Any:
+        if isinstance(data, (str, int, float, bool)):
+            return {"value": data, "label": str(data)}
+        return data
+
+    @model_validator(mode='after')
+    def _default_label(self) -> 'DashboardControlOption':
+        if not self.label:
+            self.label = str(self.value)
+        return self
 
 
 class DashboardControl(BaseModel):

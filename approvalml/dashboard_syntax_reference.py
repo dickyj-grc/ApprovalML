@@ -69,6 +69,9 @@ concrete dates:
         from_control: timeframe_to
 
 select/multi_select/date_range_preset all REQUIRE a non-empty options list. `date` requires none.
+Each option is `{ label, value }`; `label` is optional and falls back to the value, and a bare
+scalar (`- last_7_days`) is accepted as shorthand for `{ value: last_7_days }`. Prefer the full
+`{ label, value }` form so viewers see readable text.
 
 DEFAULTS — controls[].default pre-fills a control before a tile ever executes. SET ONE on every
 control any tile's `data_processor.params[]` reads via `from_control`, UNLESS the whole point is
