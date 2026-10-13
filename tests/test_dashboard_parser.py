@@ -31,6 +31,7 @@ tiles:
   - id: top_vendors
     type: table
     label: "Top Vendors"
+    description: "Highest spend this period"
     data_processor:
       source_name: "Vendor Spend SQL"
       params:
@@ -143,6 +144,8 @@ def test_full_example_parses():
     assert summary["is_valid"] is True
     assert dashboard.kind == "dashboard"
     assert len(dashboard.tiles) == 7
+    top = next(t for t in dashboard.tiles if t.id == "top_vendors")
+    assert top.description == "Highest spend this period"
 
 
 # @lat: [[dashboards#YAML schema and parser#kind discriminator required]]

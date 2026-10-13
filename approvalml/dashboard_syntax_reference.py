@@ -100,6 +100,9 @@ Common fields (all tile types):
   label         Structurally optional in the schema, but ALWAYS set it in practice — a short,
                   human-readable title (e.g. "Total Revenue"). A tile with no label renders
                   with no visible title in the viewer, which is never actually intended.
+                  The field is `label` (NOT `title` — `title` is only for layout sections).
+  description   Optional — one short sentence shown under the title explaining what the tile
+                  shows (e.g. "Approved spend per vendor, current period").
   data_processor  The same DataSourceConfig shape workflow `automatic` steps use — source_id or
                   source_name, params[], join[]. Use for any connector-backed tile.
   source        `{ type: asset, category: <str> }` — native asset-registry tile (see below).

@@ -1684,7 +1684,8 @@ class DashboardTile(BaseModel):
     """
     id: str
     type: Literal["table", "stat", "bar_chart", "scatter", "line_chart"]
-    label: Optional[str] = None  # Tile display title
+    label: Optional[str] = None  # Tile display title (kept as `label`, not `title`, for compatibility)
+    description: Optional[str] = None  # Optional subtitle shown under the title
     view_roles: Optional[list[str]] = None  # Narrows Dashboard.view_roles for this one tile —
                                              # absent means "inherit the dashboard's own view_roles",
                                              # not "visible to no one". Admin and the dashboard's
