@@ -117,12 +117,24 @@ number takes a number within min/max; number_range takes { min, max } (either si
 toggle takes true/false.
 
 TILES — every tile is one flat object discriminated by `type`. Each tile needs EXACTLY ONE
-of `data_processor` or `source` — never both, never neither. `id` must be unique within the
+of `data_processor` or `source` — never both, never neither — EXCEPT `type: text`, which takes
+neither (static content).
+
+PICKING A TYPE — choose by what the tile must show, and prefer an option over a new type:
+  one number ............ stat (kpi_badge: with change; progress: toward a target; gauge: min..max)
+  trend over time ....... line_chart (area / stacked)
+  compare categories .... bar_chart (series + stacked, horizontal); heatmap for two categories
+  share of a whole ...... pie_chart (donut); funnel for ordered stage drop-off
+  ranked list ........... table with sort_by + limit + bar_column (a leaderboard)
+  recent events ......... timeline
+  notes / headings ...... text
+Type-bound options on any other type are validation errors. `id` must be unique within the
 dashboard and is what layout.sections[].grid/.columns reference.
 
 Common fields (all tile types):
   id            Required, unique.
-  type          Required — table | stat | bar_chart | scatter | line_chart.
+  type          Required — table | stat | bar_chart | scatter | line_chart | pie_chart | funnel |
+                  heatmap | timeline | text.
   label         Structurally optional in the schema, but ALWAYS set it in practice — a short,
                   human-readable title (e.g. "Total Revenue"). A tile with no label renders
                   with no visible title in the viewer, which is never actually intended.
@@ -149,6 +161,9 @@ Common fields (all tile types):
 
 ### table
   columns: [{ label, path }]   # Required, non-empty. path is a per-row JSONata expression.
+  sort_by: <column label>      # Optional — server-side sort; sort_order: desc (default) | asc
+  limit: <int>                 # Optional — keep the first N rows after sorting
+  bar_column: <column label>   # Optional — numeric column drawn with an inline bar
 - id: top_vendors
   type: table
   data_processor: { source_name: "Vendor Spend SQL" }
@@ -156,6 +171,9 @@ Common fields (all tile types):
   columns:
     - { label: "Vendor", path: "vendor.name" }
     - { label: "Total Spend", path: "totals.amount" }
+  sort_by: "Total Spend"       # with limit + bar_column this is a top-10 leaderboard
+  limit: 10
+  bar_column: "Total Spend"
 
 ### stat
   template: <name>       # Required — must exist in the stat template registry (see STAT TEMPLATES below).
@@ -174,6 +192,10 @@ Common fields (all tile types):
     compare_metric: "totals.prior_period_amount"   # optional, same row set, no second query
     compare_label: "vs last month"
     higher_is_better: true                         # default true
+# progress — a number toward a target (exactly one of target / target_metric):
+  settings: { metric: "totals.amount", agg: sum, target: 500000, format: currency, higher_is_better: false }
+# gauge — a number on a min..max dial:
+  settings: { metric: "$average(rows.sla_pct)", min: 0, max: 100, format: percent }
 
 ### bar_chart
   x, y required. x is per-row JSONata (the grouping key). y is a plain field aggregated by
@@ -191,6 +213,8 @@ Common fields (all tile types):
   type: bar_chart
   x: "vendor.region.code"
   y: "$sum(rows.totals.amount) - $sum(rows.totals.refund_amount)"
+  Options: `series: [{label, path}]` INSTEAD of y (each series computed per x group the same way,
+  never both y and series), `stacked: true` (needs series), `horizontal: true` (long category names).
 
 ### scatter
   x, y required (both per-row JSONata). Unaggregated — every row is one point.
@@ -222,6 +246,57 @@ Common fields (all tile types):
   series:
     - { label: "Approved", path: "approved" }
     - { label: "Rejected", path: "rejected" }
+  Options: `area: true` (fill under lines), `stacked: true` (stack series as areas).
+
+### pie_chart
+  x, y, agg exactly like bar_chart (one y, no series). Optional `donut: true`, `max_slices: <int>=2+`
+  (the smallest slices beyond it merge into "Other"). Use for share-of-whole with few categories.
+- id: requests_by_status
+  type: pie_chart
+  data_processor: { source_name: "Aptiwise Internal DB" }
+  row_path: "data"
+  x: "status"
+  y: "id"
+  agg: count
+  donut: true
+  max_slices: 6
+
+### funnel
+  x (stage), y, agg like bar_chart. Optional `stages: [..]` — explicit stage order; x values not
+  listed are dropped. Each step also reports its % of the first step and of the previous step.
+- id: approval_funnel
+  type: funnel
+  x: "stage"
+  y: "id"
+  agg: count
+  stages: ["submitted", "reviewed", "approved"]
+
+### heatmap
+  x and y are BOTH per-row category paths (columns and rows of the grid). Optional `value`
+  (per-row field reduced by agg, default sum); without it each cell is the row count.
+- id: approvals_by_day_hour
+  type: heatmap
+  x: "weekday"
+  y: "hour"
+
+### timeline
+  time (per-row, sortable date/datetime) and headline required; detail optional; limit default 20.
+  Newest first.
+- id: recent_escalations
+  type: timeline
+  time: "escalated_at"
+  headline: "request_title"
+  detail: "reason"
+  limit: 15
+
+### text
+  content required — markdown subset (# headings, **bold**, *italic*, `code`, [links](https://…),
+  - / 1. lists). NO data_processor, NO source, NO row_path. Raw HTML is shown as text.
+- id: intro
+  type: text
+  label: "How to read this dashboard"
+  content: |
+    Spend is **approved** spend only. Figures refresh on every load.
 
 NATIVE ASSET SOURCE — company-scoped JSON asset records, no connector needed:
 - id: server_baselines

@@ -1706,7 +1706,10 @@ class DashboardTile(BaseModel):
     a subset of the optional fields below, enforced by validate_type_specific_fields.
     """
     id: str
-    type: Literal["table", "stat", "bar_chart", "scatter", "line_chart"]
+    type: Literal[
+        "table", "stat", "bar_chart", "scatter", "line_chart",
+        "pie_chart", "funnel", "heatmap", "timeline", "text",
+    ]
     label: Optional[str] = None  # Tile display title (kept as `label`, not `title`, for compatibility)
     description: Optional[str] = None  # Optional subtitle shown under the title
     view_roles: Optional[list[str]] = None  # Narrows Dashboard.view_roles for this one tile —
@@ -1741,14 +1744,46 @@ class DashboardTile(BaseModel):
     point_label: Optional[str] = None   # optional per-point tooltip field, per-row JSONata
     quadrants: Optional[ScatterQuadrants] = None
 
-    # line_chart
+    # line_chart (series also used by bar_chart as an alternative to y, for grouped/stacked bars)
     series: Optional[list[LineChartSeries]] = None
+    area: Optional[bool] = None         # line_chart: fill under each line
+    stacked: Optional[bool] = None      # bar_chart / line_chart: stack series instead of side by side
+    horizontal: Optional[bool] = None   # bar_chart: bars run left-to-right
+
+    # table (sort/limit also turn a table into a leaderboard; bar_column draws an inline bar)
+    sort_by: Optional[str] = None       # a columns[].label
+    sort_order: Optional[Literal["asc", "desc"]] = None
+    limit: Optional[int] = None         # table / timeline: max rows shown
+    bar_column: Optional[str] = None    # a numeric columns[].label rendered with an inline bar
+
+    # pie_chart (x/y/agg shared with bar_chart)
+    donut: Optional[bool] = None
+    max_slices: Optional[int] = None    # beyond this, the smallest slices merge into "Other"
+
+    # funnel (x/y/agg shared with bar_chart)
+    stages: Optional[list[str]] = None  # explicit stage order; x values not listed are dropped
+
+    # heatmap (x and y are both per-row category paths)
+    value: Optional[str] = None         # per-row JSONata reduced by agg; omitted = row count
+
+    # timeline
+    time: Optional[str] = None          # per-row JSONata, sortable (ISO date/datetime)
+    headline: Optional[str] = None      # per-row JSONata
+    detail: Optional[str] = None        # per-row JSONata, optional
+
+    # text (no data source)
+    content: Optional[str] = None       # markdown subset — headings, bold/italic, links, lists
 
     @model_validator(mode='after')
     def validate_source_specification(self):
-        """Exactly one of data_processor or source, not both, not neither."""
+        """Exactly one of data_processor or source, not both, not neither — except a `text` tile,
+        which shows static content and takes neither."""
         has_processor = self.data_processor is not None
         has_source = self.source is not None
+        if self.type == "text":
+            if has_processor or has_source:
+                raise ValueError(f"Tile '{self.id}' of type 'text' takes no 'data_processor' or 'source'")
+            return self
         if has_processor == has_source:
             raise ValueError(
                 f"Tile '{self.id}' must specify exactly one of 'data_processor' or 'source', "
@@ -1764,8 +1799,8 @@ class DashboardTile(BaseModel):
             raise ValueError(f"Tile '{self.id}' of type 'table' requires non-empty 'columns'")
         elif self.type == "stat" and not self.template:
             raise ValueError(f"Tile '{self.id}' of type 'stat' requires 'template'")
-        elif self.type == "bar_chart" and (not self.x or not self.y):
-            raise ValueError(f"Tile '{self.id}' of type 'bar_chart' requires 'x' and 'y'")
+        elif self.type == "bar_chart" and (not self.x or not (self.y or self.series)):
+            raise ValueError(f"Tile '{self.id}' of type 'bar_chart' requires 'x' and 'y' (or 'series')")
         elif self.type == "scatter" and (not self.x or not self.y):
             raise ValueError(f"Tile '{self.id}' of type 'scatter' requires 'x' and 'y'")
         elif self.type == "line_chart":
@@ -1773,6 +1808,14 @@ class DashboardTile(BaseModel):
                 raise ValueError(f"Tile '{self.id}' of type 'line_chart' requires 'x'")
             if not self.series:
                 raise ValueError(f"Tile '{self.id}' of type 'line_chart' requires at least one 'series' entry")
+        elif self.type in ("pie_chart", "funnel") and (not self.x or not self.y):
+            raise ValueError(f"Tile '{self.id}' of type '{self.type}' requires 'x' and 'y'")
+        elif self.type == "heatmap" and (not self.x or not self.y):
+            raise ValueError(f"Tile '{self.id}' of type 'heatmap' requires 'x' and 'y'")
+        elif self.type == "timeline" and (not self.time or not self.headline):
+            raise ValueError(f"Tile '{self.id}' of type 'timeline' requires 'time' and 'headline'")
+        elif self.type == "text" and not (self.content or "").strip():
+            raise ValueError(f"Tile '{self.id}' of type 'text' requires 'content'")
         return self
 
 
