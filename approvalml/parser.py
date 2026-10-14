@@ -1386,6 +1386,20 @@ class TriggerConfig(BaseModel):
         return self
 
 
+class ParameterDef(BaseModel):
+    """One workflow-local parameter bound to a Policy Registry key (see docs/policy_registry.md).
+
+    `bind` is the global, namespaced registry key (e.g. "finance.capex.single_purchase_limit");
+    the dict key this value is stored under in `parameters:` is the *local* name a workflow's
+    expressions reference as `params.<local_name>`. Resolved server-side only, once per instance
+    at start_workflow time — never derived from request/form data.
+    """
+    model_config = ConfigDict(extra="allow")  # forward-compat for future value_type-specific hints
+    type: str  # money, number, text, boolean, date — mirrors the registry's value_type options
+    bind: str  # namespaced registry key this parameter resolves against
+    currency: Optional[str] = None  # meaningful only when type == "money"; a template-default, not enforced
+
+
 class ApprovalProcess(BaseModel):
     """Main ApprovalML workflow schema"""
     # Discriminates this document from a `kind: dashboard` document sharing the same package/parser.
@@ -1394,6 +1408,11 @@ class ApprovalProcess(BaseModel):
     name: str
     description: Optional[str] = None
     version: str = "1.0"
+
+    # Policy Registry parameters this workflow binds to — resolved once at start_workflow and
+    # exposed to field_mapping/calculated fields/conditional_split/templates as params.<name>.
+    # See docs/policy_registry.md. Optional; absent on nearly all existing workflow YAML today.
+    parameters: Optional[dict[str, ParameterDef]] = None
 
     # Form definition - normalized to dict[str, FormField] after validation
     form: dict[str, FormField]
