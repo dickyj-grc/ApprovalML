@@ -752,18 +752,23 @@ class DataSourceParameterMapping(BaseModel):
                                         # the tile (never resolved for a scheduled subscription's created_by_id
                                         # run, or for a workflow step) — same dashboard-only restriction and
                                         # rationale as from_control, enforced the same way (yaml_validator.py).
+    from_requestor: Optional[str] = None  # Resolve against the current workflow requestor, server-side only —
+                                        # never trust a caller-supplied value. Two recognized shapes:
+                                        # "external_ids.<system>" (employee_external_ids lookup) and a
+                                        # connector-declared named collection (e.g. "zones", owned-asset lookup).
+                                        # See docs/mcp_tool_governance.md.
 
     @model_validator(mode='after')
     def validate_has_source(self):
         """Ensure exactly one source is provided"""
-        sources = [s for s in (self.from_field, self.from_asset, self.value, self.from_control, self.from_viewer) if s is not None]
+        sources = [s for s in (self.from_field, self.from_asset, self.value, self.from_control, self.from_viewer, self.from_requestor) if s is not None]
         if len(sources) == 0:
             raise ValueError(
-                f"Parameter '{self.name}' must have one of: 'from_field', 'from_asset', 'from_control', 'from_viewer', or 'value'"
+                f"Parameter '{self.name}' must have one of: 'from_field', 'from_asset', 'from_control', 'from_viewer', 'from_requestor', or 'value'"
             )
         if len(sources) > 1:
             raise ValueError(
-                f"Parameter '{self.name}' must have only one of: 'from_field', 'from_asset', 'from_control', 'from_viewer', or 'value'"
+                f"Parameter '{self.name}' must have only one of: 'from_field', 'from_asset', 'from_control', 'from_viewer', 'from_requestor', or 'value'"
             )
         return self
 
@@ -1386,6 +1391,20 @@ class TriggerConfig(BaseModel):
         return self
 
 
+class ParameterDef(BaseModel):
+    """One workflow-local parameter bound to a Policy Registry key (see docs/policy_registry.md).
+
+    `bind` is the global, namespaced registry key (e.g. "finance.capex.single_purchase_limit");
+    the dict key this value is stored under in `parameters:` is the *local* name a workflow's
+    expressions reference as `params.<local_name>`. Resolved server-side only, once per instance
+    at start_workflow time — never derived from request/form data.
+    """
+    model_config = ConfigDict(extra="allow")  # forward-compat for future value_type-specific hints
+    type: str  # money, number, text, boolean, date — mirrors the registry's value_type options
+    bind: str  # namespaced registry key this parameter resolves against
+    currency: Optional[str] = None  # meaningful only when type == "money"; a template-default, not enforced
+
+
 class ApprovalProcess(BaseModel):
     """Main ApprovalML workflow schema"""
     # Discriminates this document from a `kind: dashboard` document sharing the same package/parser.
@@ -1394,6 +1413,11 @@ class ApprovalProcess(BaseModel):
     name: str
     description: Optional[str] = None
     version: str = "1.0"
+
+    # Policy Registry parameters this workflow binds to — resolved once at start_workflow and
+    # exposed to field_mapping/calculated fields/conditional_split/templates as params.<name>.
+    # See docs/policy_registry.md. Optional; absent on nearly all existing workflow YAML today.
+    parameters: Optional[dict[str, ParameterDef]] = None
 
     # Form definition - normalized to dict[str, FormField] after validation
     form: dict[str, FormField]
