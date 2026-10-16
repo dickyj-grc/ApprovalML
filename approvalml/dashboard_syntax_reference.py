@@ -365,6 +365,7 @@ def _render_stat_templates_section(stat_templates: Optional[List[Dict[str, Any]]
              "`settings:` must match that template's own schema:"]
     for tpl in stat_templates:
         name = tpl.get("name", "?")
+        description = (tpl.get("description") or "").strip()
         schema = tpl.get("settings_schema") or {}
         props = schema.get("properties") or {}
         required = set(schema.get("required") or [])
@@ -373,5 +374,6 @@ def _render_stat_templates_section(stat_templates: Optional[List[Dict[str, Any]]
             marker = "required" if prop_name in required else "optional"
             desc = prop_def.get("description") or prop_def.get("title") or ""
             prop_lines.append(f"      {prop_name} ({marker}): {desc}".rstrip())
-        lines.append(f"  {name}:\n" + "\n".join(prop_lines))
+        header = f"  {name}" + (f" — {description}" if description else "") + ":"
+        lines.append(header + "\n" + "\n".join(prop_lines))
     return "\n".join(lines)
