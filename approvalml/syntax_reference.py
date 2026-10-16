@@ -1895,6 +1895,14 @@ provision_user:
 - `from_asset: <asset-name>` — reads from an asset's `properties` in the asset register
   - `property: $.last_transaction_id` — JSONPath into `properties` (or plain key name without `$`)
   - Omit `property` to pass the entire `properties` dict
+- `from_requestor: <path>` — resolves server-side against the current workflow requestor; never
+  trust a caller-supplied value for anything bound this way. Two recognized path shapes:
+  - `external_ids.<system>` — looks up the requestor's `employee_external_ids` row for that system
+    (e.g. `external_ids.hris`)
+  - a bare connector-declared name (e.g. `zones`) — an owned-asset lookup via that connector's
+    named collection
+  - Workflow-only, like `from_field` — rejected on dashboard tiles, which have no workflow
+    requestor at render time (use `from_viewer` there instead)
 - `value: <literal>` — static value hardcoded in the YAML
 
 ```yaml
