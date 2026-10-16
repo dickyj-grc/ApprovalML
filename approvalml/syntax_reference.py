@@ -39,6 +39,13 @@ view_all_roles: []  # e.g. ["finance", "admin", "hr"]
 #   enabled: true
 #   requestor_email: "automation@company.com"   # optional — owner of this workflow's own instances
 
+# Optional Policy Registry parameters — company-scoped constants (a budget limit, an approval
+# threshold) a workflow binds to by key instead of hardcoding the value. See "Parameters" below.
+# parameters:
+#   budget_limit:
+#     type: money
+#     bind: "finance.capex.single_purchase_limit"
+
 # Form definition
 form:
   # Optional page-repeating header zone (field names referenced from fields[])
@@ -89,9 +96,39 @@ settings:
    - ❌ **DO NOT** use deprecated type: `approval`
 
 4. ✅ **Key Order:** Always output top-level keys in this exact canonical order:
-   `name → description → version → type → triggers → submission_criteria → view_all_roles → form → workflow → settings → guards`
+   `name → description → version → type → triggers → parameters → submission_criteria → view_all_roles → form → workflow → settings → guards`
    - Any additional top-level keys not in this list should appear after `settings`
    - ❌ **DO NOT** place `form` or `workflow` before `name`/`description`
+
+## Parameters (Optional)
+Named, typed constants a workflow binds to from the company's Policy Registry — a budget limit, an
+approval threshold — instead of a literal number hardcoded in a `conditional_split`/`field_mapping`
+expression. This is what lets one workflow file, shipped to many companies via a linked system pack,
+serve a different threshold per company without forking the YAML.
+
+```yaml
+parameters:
+  budget_limit:
+    type: money              # money, number, text, boolean, date — must match the registry key's own type
+    currency: IDR             # optional, money only — a template default, not enforced
+    bind: "finance.capex.single_purchase_limit"   # namespaced registry key this parameter resolves against
+```
+
+**Rules:**
+- `bind` must name a key that already exists in the company's Policy Registry (Asset Register → "Policy
+  Registry Key" schema) — a missing or wrong-type `bind` is a save-blocking validation error, never a
+  silent fallback.
+- The dict key (`budget_limit` above) is **local** to this workflow — it is NOT the same as `bind`'s
+  global registry key, and is never taken from submitted form/request data.
+- Reference a resolved parameter as `params.<local_name>` in `field_mapping` (`vars.params.<name>`),
+  calculated fields (`params.<name>`), `conditional_split`'s `conditions:` string expressions
+  (`params.<name>`), and `{{params.<name>}}`/`${params.<name>}` string templates (notifications,
+  asset names). A `money`-typed parameter also exposes a sibling `params.<name>_currency`.
+- **Do NOT confuse this with `param_mapping`** (see "Parameter Mapping" further below) — that is an
+  unrelated, pre-existing feature for renaming inbound API/webhook payload keys, not a typed,
+  registry-bound constant.
+- Values are resolved **once**, server-side, when the instance is created — not re-resolved later, and
+  never derived from `fields`/request data.
 
 ## Triggers (Optional)
 
