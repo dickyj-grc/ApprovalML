@@ -146,8 +146,9 @@ Common fields (all tile types):
                   shows (e.g. "Approved spend per vendor, current period").
   data_processor  The same DataSourceConfig shape workflow `automatic` steps use — source_id or
                   source_name, params[], join[]. Use for any connector-backed tile.
-  source        `{ type: asset, category: <str> }` — native asset-registry tile (see below).
-                  Exactly one of data_processor/source, not both.
+  source        `{ type: asset, category: <str> }` — one asset category — or
+                  `{ type: asset, categories: [<str>, ...] }` — the union of several.
+                  Exactly one of category/categories, and exactly one of data_processor/source.
   row_path      JSONata expression selecting the row array out of the raw response.
                   Required for data_processor tiles; NOT used (and must be omitted) for source: asset tiles.
                   The JSONata root context depends on the raw connector response shape: a BARE LIST
@@ -367,9 +368,10 @@ NATIVE ASSET SOURCE — company-scoped JSON asset records, no connector needed:
   columns:
     - { label: "Name", path: "name" }
     - { label: "OS Version", path: "properties.os_version" }
-source: {type: asset} tiles have NO row_path (result is already [{uuid, name, properties}]) and only
-`category` filtering (no schema_id/schema_name). Visibility is scoped per-viewer, same as the
-Assets UI itself.
+source: {type: asset} tiles have NO row_path (result is already [{uuid, name, properties}]).
+Filter with one `category`, or `categories: [a, b]` to union several categories into one tile
+(headline totals and a waiting list that span asset types). Never set both keys. There is no
+schema_id filter on the tile itself. Visibility is scoped per-viewer, same as the Assets UI.
 
 DATA PROCESSOR PARAMETERS — data_processor.params[] reuses the workflow DataSourceParameterMapping
 shape, plus two dashboard-only sources. Each entry needs EXACTLY ONE of from_control, from_viewer,

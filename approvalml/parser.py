@@ -1673,9 +1673,26 @@ class DashboardAssetSource(BaseModel):
 
     No row_path: the underlying query (list_by_category-equivalent, viewer-scoped) already
     returns [{name, properties}], so there is nothing for JSONata array-extraction to do.
+
+    Exactly one of `category` (one category) or `categories` (union of several). The rows
+    stay viewer-scoped either way.
     """
     type: Literal["asset"] = "asset"
-    category: str
+    category: Optional[str] = None
+    categories: Optional[list[str]] = None
+
+    @model_validator(mode="after")
+    def category_or_categories(self):
+        one = (self.category or "").strip()
+        listed = self.categories
+        if one and listed is not None:
+            raise ValueError("source specifies both 'category' and 'categories' — use one")
+        if listed is not None:
+            if not listed or any(not isinstance(item, str) or not item.strip() for item in listed):
+                raise ValueError("'categories' must be a non-empty list of category names")
+        elif not one:
+            raise ValueError("source requires 'category' or 'categories'")
+        return self
 
 
 DASHBOARD_COLUMN_TYPES = (
