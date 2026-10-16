@@ -45,6 +45,7 @@ controls:
   - name: pillar
     label: "Pillar"
     type: select                              # static options, one value
+    display: tabs                             # optional — dropdown (default) | tabs; single value only
     options:
       - { label: "Growth & Web", value: "growth" }
   - name: severity
@@ -57,6 +58,7 @@ controls:
     label: "Timeframe"
     type: date_range_preset                   # resolves server-side into {name}_from / {name}_to
     allow_custom: true                        # optional — adds a Custom from/to tab
+    value_format: date                        # optional — date | datetime | epoch | epoch_ms | "%d/%m/%Y"
     options:
       - { label: "Last 30 Days", value: "last_30_days" }
   - name: amount
@@ -74,8 +76,18 @@ controls:
 Control types: date | select | date_range_preset | number | number_range | toggle.
 `multi_select` is a legacy alias of `select` + `multiple: true` — prefer the latter.
 `multiple` is only valid on select; `allow_custom` only on date_range_preset; `min`/`max`/`step`
-only on number/number_range; `options` only on select/date_range_preset. Free-text controls do
-not exist — never invent one.
+only on number/number_range; `options` only on select/date_range_preset; `display` only on a
+single-value select (never with multiple); `value_format` only on date/date_range_preset.
+Free-text controls do not exist — never invent one.
+
+`display: tabs` renders a select's options as a tab row that applies on click — use it for up to
+~7 short options, e.g. when an API takes its own period names (`last_14d`): the option value is
+sent to the data source as written.
+
+`value_format` sets how a date reaches a data source via from_control: `date` (default,
+2026-10-16), `datetime` (2026-10-16T00:00:00; a range's _to is 23:59:59), `epoch` / `epoch_ms`
+(UTC), or a strftime pattern containing "%" such as "%d/%m/%Y". Set it only when the data source
+needs a non-ISO date. `$controls.<name>` in JSONata always stays YYYY-MM-DD.
 
 date_range_preset known option values: last_7_days, last_30_days, this_month, last_month,
 this_quarter, last_quarter, this_year (looking back), and next_7_days, next_30_days,

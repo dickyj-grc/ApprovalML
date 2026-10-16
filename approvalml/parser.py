@@ -4,6 +4,7 @@ ApprovalML YAML Parser with comprehensive validation and schema support.
 
 import re
 from enum import Enum
+import datetime as _dt
 from typing import Any, Literal, Optional, Union
 
 import yaml
@@ -1610,6 +1611,45 @@ DASHBOARD_RANGE_SUFFIXES: dict[str, tuple[str, str]] = {
 
 DASHBOARD_CONTROL_TYPES = ("date", "select", "multi_select", "date_range_preset", "number", "number_range", "toggle")
 
+# Named `value_format`s for date / date_range_preset controls; anything containing "%" is taken as
+# a strftime pattern instead. Only changes what a data source receives through from_control.
+DASHBOARD_DATE_VALUE_FORMATS = ("date", "datetime", "epoch", "epoch_ms")
+
+
+def dashboard_value_format_error(value_format: Any) -> Optional[str]:
+    """Why `value_format` is unusable, or None when it is fine (shared by validator and service)."""
+    if not isinstance(value_format, str) or not value_format:
+        return "must be a non-empty string"
+    if value_format in DASHBOARD_DATE_VALUE_FORMATS:
+        return None
+    if "%" not in value_format:
+        return (f"must be one of {', '.join(DASHBOARD_DATE_VALUE_FORMATS)} "
+                f"or a strftime pattern such as \"%d/%m/%Y\"")
+    try:
+        _dt.datetime(2000, 1, 31, 23, 59, 59).strftime(value_format)
+    except ValueError as exc:
+        return f"is not a valid strftime pattern ({exc})"
+    return None
+
+
+def format_dashboard_date(day: Any, value_format: Optional[str], end_of_day: bool = False) -> Any:
+    """Render an ISO date (or `date`) the way a control's `value_format` asks. The date is taken
+    at 00:00:00, or 23:59:59 when `end_of_day` (a range's `_to` side), so an inclusive range keeps
+    the whole last day. epoch / epoch_ms are computed in UTC. Unparseable input passes through."""
+    if not value_format or value_format == "date":
+        return day
+    try:
+        d = day if isinstance(day, _dt.date) else _dt.date.fromisoformat(str(day))
+    except ValueError:
+        return day
+    moment = _dt.datetime.combine(d, _dt.time(23, 59, 59) if end_of_day else _dt.time(0, 0, 0))
+    if value_format == "datetime":
+        return moment.isoformat()
+    if value_format in ("epoch", "epoch_ms"):
+        seconds = int(moment.replace(tzinfo=_dt.timezone.utc).timestamp())
+        return seconds * 1000 + (999 if end_of_day else 0) if value_format == "epoch_ms" else seconds
+    return moment.strftime(value_format)
+
 
 def dashboard_control_is_multi(control: Any) -> bool:
     """`select` + `multiple: true` is the canonical multi-value select; `multi_select` is kept as
@@ -1657,6 +1697,12 @@ class DashboardControl(BaseModel):
     options: Optional[list[DashboardControlOption]] = None
     multiple: Optional[bool] = None       # select only — true makes it multi-value (multi_select is an alias)
     allow_custom: Optional[bool] = None   # date_range_preset only — adds a "Custom" from/to range
+    display: Optional[Literal["dropdown", "tabs"]] = None  # single-value select only — "tabs" renders the
+    # options as a segmented tab row (one click applies, like date_range_preset) instead of a dropdown.
+    value_format: Optional[str] = None    # date / date_range_preset only — how the date is sent to a data
+    # source through from_control: "date" (default, YYYY-MM-DD), "datetime" (YYYY-MM-DDTHH:MM:SS),
+    # "epoch" / "epoch_ms" (UTC), or a strftime pattern such as "%d/%m/%Y". A range's _to side is the
+    # end of its day (23:59:59). $controls in JSONata always keeps the ISO date.
     min: Optional[Union[int, float]] = None   # number / number_range bounds
     max: Optional[Union[int, float]] = None
     step: Optional[Union[int, float]] = None
