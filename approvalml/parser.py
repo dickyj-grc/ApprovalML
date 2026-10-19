@@ -753,18 +753,23 @@ class DataSourceParameterMapping(BaseModel):
                                         # the tile (never resolved for a scheduled subscription's created_by_id
                                         # run, or for a workflow step) — same dashboard-only restriction and
                                         # rationale as from_control, enforced the same way (yaml_validator.py).
+    from_requestor: Optional[str] = None  # Resolve against the current workflow requestor, server-side only —
+                                        # never trust a caller-supplied value. Two recognized shapes:
+                                        # "external_ids.<system>" (employee_external_ids lookup) and a
+                                        # connector-declared named collection (e.g. "zones", owned-asset lookup).
+                                        # See docs/mcp_tool_governance.md.
 
     @model_validator(mode='after')
     def validate_has_source(self):
         """Ensure exactly one source is provided"""
-        sources = [s for s in (self.from_field, self.from_asset, self.value, self.from_control, self.from_viewer) if s is not None]
+        sources = [s for s in (self.from_field, self.from_asset, self.value, self.from_control, self.from_viewer, self.from_requestor) if s is not None]
         if len(sources) == 0:
             raise ValueError(
-                f"Parameter '{self.name}' must have one of: 'from_field', 'from_asset', 'from_control', 'from_viewer', or 'value'"
+                f"Parameter '{self.name}' must have one of: 'from_field', 'from_asset', 'from_control', 'from_viewer', 'from_requestor', or 'value'"
             )
         if len(sources) > 1:
             raise ValueError(
-                f"Parameter '{self.name}' must have only one of: 'from_field', 'from_asset', 'from_control', 'from_viewer', or 'value'"
+                f"Parameter '{self.name}' must have only one of: 'from_field', 'from_asset', 'from_control', 'from_viewer', 'from_requestor', or 'value'"
             )
         return self
 
@@ -1738,9 +1743,26 @@ class DashboardAssetSource(BaseModel):
 
     No row_path: the underlying query (list_by_category-equivalent, viewer-scoped) already
     returns [{name, properties}], so there is nothing for JSONata array-extraction to do.
+
+    Exactly one of `category` (one category) or `categories` (union of several). The rows
+    stay viewer-scoped either way.
     """
     type: Literal["asset"] = "asset"
-    category: str
+    category: Optional[str] = None
+    categories: Optional[list[str]] = None
+
+    @model_validator(mode="after")
+    def category_or_categories(self):
+        one = (self.category or "").strip()
+        listed = self.categories
+        if one and listed is not None:
+            raise ValueError("source specifies both 'category' and 'categories' — use one")
+        if listed is not None:
+            if not listed or any(not isinstance(item, str) or not item.strip() for item in listed):
+                raise ValueError("'categories' must be a non-empty list of category names")
+        elif not one:
+            raise ValueError("source requires 'category' or 'categories'")
+        return self
 
 
 DASHBOARD_COLUMN_TYPES = (

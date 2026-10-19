@@ -200,6 +200,28 @@ def test_asset_join_with_source_name_is_rejected():
     assert "must not specify" in summary["errors"][0]
 
 
+def test_asset_source_categories_union_parses():
+    good = VALID_DASHBOARD.replace(
+        "    source:\n      type: asset\n      category: server\n",
+        "    source:\n      type: asset\n      categories:\n        - server\n        - laptop\n",
+    )
+    dashboard, summary = parse_dashboard_yaml(good)
+    assert dashboard is not None, summary["errors"]
+    server_tile = next(t for t in dashboard.tiles if t.id == "server_baselines")
+    assert server_tile.source.category is None
+    assert server_tile.source.categories == ["server", "laptop"]
+
+
+def test_asset_source_rejects_category_and_categories_together():
+    bad = VALID_DASHBOARD.replace(
+        "    source:\n      type: asset\n      category: server\n",
+        "    source:\n      type: asset\n      category: server\n      categories: [laptop]\n",
+    )
+    dashboard, summary = parse_dashboard_yaml(bad)
+    assert dashboard is None
+    assert any("both" in err for err in summary["errors"])
+
+
 # @lat: [[dashboards#Row filtering#Native asset source has no row_path]]
 def test_asset_source_tile_has_no_row_path_requirement():
     dashboard, summary = parse_dashboard_yaml(VALID_DASHBOARD)
