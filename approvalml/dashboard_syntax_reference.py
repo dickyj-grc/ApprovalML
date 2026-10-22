@@ -132,7 +132,8 @@ toggle takes true/false.
 
 TILES — every tile is one flat object discriminated by `type`. Each tile needs EXACTLY ONE
 of `data_processor` or `source` — never both, never neither — EXCEPT `type: text`, which takes
-neither (static content).
+neither when it is static content (or one of them to fill {{ }} placeholders), and
+`type: attention_list`, whose sources are set per item instead.
 
 PICKING A TYPE — choose by what the tile must show, and prefer an option over a new type:
   one number ............ stat (kpi_badge: with change; progress: toward a target; gauge: min..max)
@@ -142,14 +143,18 @@ PICKING A TYPE — choose by what the tile must show, and prefer an option over 
   share of a whole ...... pie_chart (donut); funnel for ordered stage drop-off
   ranked list ........... table with sort_by + limit and a `type: bar` column (a leaderboard)
   recent events ......... timeline
-  notes / headings ...... text
+  notes / headings ...... text (tone: for an info/warning banner)
+  a state, not a number . stat with template: status ("Ready" in green, caption underneath)
+  one record's details .. detail_card (label/value grid + status pill + buttons)
+  a list of things ...... card_list (one card per row: title, status, fields, line items, buttons)
+  to-do / alerts ........ attention_list (entries from several sources, each with a button)
 Type-bound options on any other type are validation errors. `id` must be unique within the
 dashboard and is what layout.sections[].grid/.columns reference.
 
 Common fields (all tile types):
   id            Required, unique.
   type          Required — table | stat | bar_chart | scatter | line_chart | pie_chart | funnel |
-                  heatmap | timeline | text | summary_card.
+                  heatmap | timeline | text | summary_card | detail_card | card_list | attention_list.
   label         Structurally optional in the schema, but ALWAYS set it in practice — a short,
                   human-readable title (e.g. "Total Revenue"). A tile with no label renders
                   with no visible title in the viewer, which is never actually intended.
@@ -161,6 +166,9 @@ Common fields (all tile types):
   source        `{ type: asset, category: <str> }` — one asset category — or
                   `{ type: asset, categories: [<str>, ...] }` — the union of several.
                   Exactly one of category/categories, and exactly one of data_processor/source.
+                  Or `{ type: workflow_instances, requested_by: viewer, workflows?: [names] }` —
+                  the viewer's OWN requests (see WORKFLOW REQUESTS below).
+  header_actions  Optional buttons in the tile header (see ACTIONS) — no row, so no prefill.
   row_path      JSONata expression selecting the row array out of the raw response.
                   Required for data_processor tiles; NOT used (and must be omitted) for source: asset tiles.
                   The JSONata root context depends on the raw connector response shape: a BARE LIST
@@ -183,7 +191,11 @@ Common fields (all tile types):
     text | bar (+ optional max: fixed scale, e.g. 100) | tag (chip; a list shows one chip per item)
     | number | currency (+ optional currency: 3-letter ISO code, default USD) | percent (value 0-100)
     | date | datetime | relative ("3 hours ago") | boolean (✓/—) | link (http/https, + optional link_text)
-  `max`/`currency`/`link_text` are validation errors on any other column type. There is NO
+    | masked (only the last `visible` characters, default 4, e.g. a bank account "•••• 6622" —
+      masked on the server, so use it for any account/ID number a viewer shouldn't see in full)
+  A tag column may set `tag_tones: { <value>: success|info|warning|error|neutral }` to colour
+  known values (Paid: success, Overdue: error). `max`/`currency`/`link_text`/`visible`/`tag_tones`
+  are validation errors on any other column type. There is NO
   tile-level bar_column — put `type: bar` on the column. Use tag for status/category values,
   relative for "last updated"-style timestamps, currency/percent/number for figures.
 - id: top_vendors
@@ -219,6 +231,16 @@ Common fields (all tile types):
   settings: { metric: "totals.amount", agg: sum, target: 500000, format: currency, higher_is_better: false }
 # gauge — a number on a min..max dial:
   settings: { metric: "$average(rows.sla_pct)", min: 0, max: 100, format: percent }
+# status — a coloured word instead of a number (metric returns the TEXT, tone returns the colour):
+  settings:
+    metric: "$count(rows[allow_out_payment]) > 0 ? 'Ready' : 'On hold'"
+    tone: "$count(rows[allow_out_payment]) > 0 ? 'success' : 'warning'"
+Every template also takes `caption` — whole-set JSONata returning the line of text under the
+value, e.g. caption: "$string($count(rows)) & ' invoices in progress'" — and `currency` (ISO code,
+e.g. IDR) for format: currency. progress takes `display_metric` when the big number should differ
+from the bar (credit AVAILABLE as the number while the bar fills with credit USED). Format numbers
+inside a caption with $formatNumber(x, '#,##0') and dates with
+$fromMillis($toMillis(d), '[D01] [MNn,*-3] [Y]', '+0700') (pass the company's UTC offset).
 
 ### bar_chart
   x, y required. x is per-row JSONata (the grouping key). y is a plain field aggregated by
@@ -314,12 +336,24 @@ Common fields (all tile types):
 
 ### text
   content required — markdown subset (# headings, **bold**, *italic*, `code`, [links](https://…),
-  - / 1. lists). NO data_processor, NO source, NO row_path. Raw HTML is shown as text.
+  - / 1. lists). Static by default: NO data_processor, NO source, NO row_path. Raw HTML is shown
+  as text. `tone: info|success|warning|error` renders it as a tinted banner.
 - id: intro
   type: text
   label: "How to read this dashboard"
   content: |
     Spend is **approved** spend only. Figures refresh on every load.
+  With ONE data_processor or source it becomes a data-backed banner: `{{ expr }}` placeholders in
+  content are whole-set JSONata over {rows} (values are inserted as plain text), and `show_if`
+  (whole-set JSONata) hides the tile while falsy:
+- id: overdue_banner
+  type: text
+  tone: warning
+  data_processor: { source_name: "Open Customer Invoices", params: [ ... ] }
+  row_path: "data"
+  filter: "$toMillis(invoice_date_due) < $millis()"
+  show_if: "$count(rows) > 0"
+  content: "You have {{ $count(rows) }} overdue invoice(s) totalling Rp {{ $formatNumber($sum(rows.amount_residual), '#,##0') }}."
 
 ### summary_card
   A headline number with up to 4 coloured breakdown boxes, the single most important row and an
@@ -362,6 +396,86 @@ Common fields (all tile types):
            tones: { error_below: 7, warning_below: 30 } }
     link: asset
   action: { label: "Review API tokens", href: "/activities?tab=assets&category=expiry_item&q=API%20token" }
+
+### detail_card
+  One record (the first row after filter) as a label/value grid with an optional status pill and
+  buttons — a company profile, a bank account. `fields` has the table column shape
+  ({label, path, type?} incl. masked/tag/currency/date); status: {text, tone?} and every path are
+  per-row JSONata on that record. `empty_text` shows when there is no row.
+- id: bank_card
+  type: detail_card
+  label: "Bank account"
+  data_processor: { source_name: "Partner Bank Accounts", params: [ ... ] }
+  row_path: "data"
+  status: { text: "allow_out_payment ? 'Verified' : 'Pending verification'", tone: "allow_out_payment ? 'success' : 'warning'" }
+  fields:
+    - { label: "Bank", path: "bank_id[1]" }
+    - { label: "Account number", path: "acc_number", type: masked }
+  actions: [ { label: "Request a change", workflow: "Supplier Bank Change", style: default } ]
+
+### card_list
+  One card per row. headline (required, per-row title) and detail (per-row meta line) as on a
+  timeline; status {text, tone?}; accent (per-row JSONata returning a tone → coloured left border,
+  null for none); fields (column shape); items {path, label, value?, unit?} for line items — path
+  is per-row JSONata returning a list, label/value are JSONata per list item; note (per-row text
+  under the fields); actions per card; sort_by (per-row JSONata, asc by default) + sort_order +
+  limit; empty_text.
+- id: deliveries
+  type: card_list
+  label: "Incoming deliveries"
+  data_processor: { source_name: "Customer Deliveries", params: [ ... ], join: [ ... pick: { lines: "$" }, as_array: true ] }
+  row_path: "data"
+  sort_by: "scheduled_date"
+  headline: "name"
+  status: { text: "state = 'assigned' ? 'Ready to ship' : 'Preparing'", tone: "state = 'assigned' ? 'info' : 'neutral'" }
+  accent: "state = 'assigned' ? 'info' : null"
+  fields:
+    - { label: "Expected", path: "scheduled_date", type: datetime }
+    - { label: "To", path: "partner_id[1]" }
+  items: { path: "lines", label: "product_id[1]", value: "product_uom_qty", unit: "pcs" }
+  actions:
+    - { label: "Verify delivery", workflow: "Customer Delivery Verification", prefill: { picking_id: "id" }, enabled_when: "state = 'done'", style: primary }
+
+### attention_list
+  A to-do list built from SEVERAL sources: `items` is a list, each with its OWN data_processor or
+  source (+ row_path, filter), title and detail (per-row JSONata), a fixed tone, and an optional
+  action. Every row an item's filter keeps becomes one entry; items keep their order. The tile
+  itself takes NO data_processor/source. Optional limit, empty_text. A section badge pointing at it
+  counts its entries.
+- id: attention
+  type: attention_list
+  label: "Needs your attention"
+  items:
+    - source: { type: asset, category: supplier_certificate }
+      filter: "$toMillis(properties.expires_at) - $millis() < 60 * 86400000"
+      title: "properties.title & ' expires in ' & $string($floor(($toMillis(properties.expires_at) - $millis()) / 86400000)) & ' days'"
+      detail: "'Upload the renewed certificate to keep receiving purchase orders.'"
+      tone: warning
+      action: { label: "Open", tab: certifications }
+
+ACTIONS — buttons on detail_card / card_list rows (`actions`), attention_list items (`action`)
+and any tile header (`header_actions`). Each needs exactly ONE target:
+  workflow: <workflow name or uuid>   → opens that workflow's request form PRE-FILLED and never
+                                         auto-submitted; prefill: { form_field: per-row JSONata }
+  href: "/path/{{field}}" | "https://…"  → an app path or http(s) URL; {{field}} takes a row value
+  tab: <section id>                    → switches to that section (tabs layout) / scrolls to it
+  style: primary | default; enabled_when: per-row JSONata (falsy → disabled button).
+Header actions have no row: no prefill, no enabled_when. Dashboards never write data — a change
+the viewer asks for is always a workflow request. A workflow must exist and be active.
+
+WORKFLOW REQUESTS — `source: { type: workflow_instances, requested_by: viewer }` lists the
+viewer's OWN requests, newest first (never anyone else's); `workflows: [names]` narrows it. Rows:
+{uuid, reference ("REQ-1042"), workflow, title, status (draft|in_progress|approved|rejected|
+cancelled|error), status_label ("In review", "Approved"…), current_step, submitted_at, decided_at,
+data (the request's own form fields), href}. No row_path.
+
+PARTNER PORTALS — a supplier/customer dashboard shared with external people: an admin maps each
+person to their partner id (People Management → External IDs, e.g. system `odoo`) and every
+connector tile filters by `from_viewer: external_ids.<system>`; asset tiles are already scoped
+to what the viewer owns. Use stat/status for headline facts, detail_card for profile/bank data
+(masked account numbers), card_list for certificates/deliveries/addresses/requests,
+attention_list on the overview, workflow actions for every change request, and
+`layout.display: tabs` with a badge on the overview tab.
 
 CONTROL VALUES IN EXPRESSIONS — every JSONata expression in a tile (filter, row_path, metric,
 x/y, columns, summary_card fields…) can read the dashboard's resolved control values as
@@ -406,6 +520,12 @@ workflow request's form fields, a dashboard has none, and the validator rejects 
                                      # asset source (above) already gets per-viewer row scoping
                                      # for free via owner_id/view_roles, so from_viewer is mainly
                                      # for a data_processor tile that needs the same effect.
+      - name: partner_id
+        from_viewer: external_ids.odoo  # the viewer's id in another system (mapped by an admin
+                                     # in People Management → External IDs). Use it for a
+                                     # supplier/customer portal: every tile filters the source by
+                                     # that viewer's partner id. A viewer with no mapping for the
+                                     # system gets an access error instead of unfiltered rows.
 
 A multi-value select resolves to a LIST. A data source param shown as `name (csv list)` (its
 placeholder is `{{name:csv}}`) wants exactly that — the list is sent as "a,b". Wire it with
@@ -516,6 +636,14 @@ dashboards particularly well since tiles are commonly mixed-height:
           - [ top_vendors, spend_by_region ]
 Every tile id referenced by a section must exist in `tiles`; every tile should normally appear
 in at least one section or it will never be visible.
+`layout.display: tabs` shows one section at a time behind a tab row (default `sections` stacks
+them). A section's `badge: { tile: <tile id> }` puts that tile's count on its tab — the entries of
+an attention_list or card_list, the rows of a table, or a stat's number:
+  layout:
+    display: tabs
+    sections:
+      - { id: overview, title: "Overview", badge: { tile: attention }, grid: [[payment_status, coming_to_you], [attention]] }
+      - { id: payments, title: "Payments", grid: [[payments]] }
 
 SUBSCRIPTIONS — emails a digest of the tiles on a cron schedule. Each recipient only gets the tiles
 they may see: a tile's own view_roles applies per recipient, and from_viewer / source: asset tiles
@@ -555,7 +683,11 @@ def _render_stat_templates_section(stat_templates: Optional[List[Dict[str, Any]]
             "ONE of target (number) or target_metric (JSONata), format (default number), "
             "higher_is_better (default true; false when exceeding the target is bad).\n"
             "  gauge — a number on a min..max dial. settings: metric (required), agg (optional), "
-            "min (default 0), max (required, > min), format (default number), higher_is_better (default true)."
+            "min (default 0), max (required, > min), format (default number), higher_is_better (default true).\n"
+            "  status — a coloured word instead of a number. settings: metric (required, JSONata returning "
+            "the text), tone (optional, JSONata returning success|info|warning|error|neutral).\n"
+            "  Every template also takes caption (optional, JSONata text under the value) and currency "
+            "(optional ISO code for format: currency); progress also takes display_metric."
         )
     lines = ["STAT TILE TEMPLATES — a stat tile's `template:` must be one of these names, and its "
              "`settings:` must match that template's own schema:"]

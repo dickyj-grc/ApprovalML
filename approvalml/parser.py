@@ -738,6 +738,25 @@ class ApiConfig(BaseModel):
     save_to: Optional[str] = None  # Variable name to save the response
 
 
+# from_viewer values: a fixed field of the viewing employee, or `external_ids.<system>` — that
+# employee's id in another system (employee_external_ids), e.g. a partner's id in an ERP.
+DASHBOARD_VIEWER_FIELDS = ("employee_id", "email")
+DASHBOARD_VIEWER_EXTERNAL_ID_PREFIX = "external_ids."
+_VIEWER_EXTERNAL_ID_RE = re.compile(r"^external_ids\.[A-Za-z0-9_-]+$")
+
+
+def dashboard_viewer_source_error(value: Any) -> Optional[str]:
+    """Why a from_viewer value is invalid, or None when it is one of the accepted forms."""
+    if value in DASHBOARD_VIEWER_FIELDS:
+        return None
+    if isinstance(value, str) and _VIEWER_EXTERNAL_ID_RE.match(value):
+        return None
+    return (
+        f"must be {' or '.join(DASHBOARD_VIEWER_FIELDS)}, or external_ids.<system> "
+        f"(letters, digits, '_' or '-' after the dot), got {value!r}"
+    )
+
+
 class DataSourceParameterMapping(BaseModel):
     """Parameter mapping for data source"""
     name: str  # Parameter name
@@ -749,15 +768,26 @@ class DataSourceParameterMapping(BaseModel):
                                         # Workflows have no control_values at runtime — the workflow YAML validator
                                         # (yaml_validator.py) rejects this variant there; only the parser allows it
                                         # generically since this model is shared between workflow steps and tiles.
-    from_viewer: Optional[Literal["employee_id", "email"]] = None  # Dashboard-only: the live viewer executing
-                                        # the tile (never resolved for a scheduled subscription's created_by_id
-                                        # run, or for a workflow step) — same dashboard-only restriction and
-                                        # rationale as from_control, enforced the same way (yaml_validator.py).
+    from_viewer: Optional[str] = None  # Dashboard-only: the live viewer executing the tile —
+                                        # employee_id, email, or external_ids.<system> (see
+                                        # dashboard_viewer_source_error). Never resolved for a scheduled
+                                        # subscription's created_by_id run, or for a workflow step — same
+                                        # dashboard-only restriction and rationale as from_control, enforced
+                                        # the same way (yaml_validator.py).
     from_requestor: Optional[str] = None  # Resolve against the current workflow requestor, server-side only —
                                         # never trust a caller-supplied value. Two recognized shapes:
                                         # "external_ids.<system>" (employee_external_ids lookup) and a
                                         # connector-declared named collection (e.g. "zones", owned-asset lookup).
                                         # See docs/mcp_tool_governance.md.
+
+    @field_validator('from_viewer')
+    @classmethod
+    def validate_from_viewer(cls, v):
+        if v is not None:
+            problem = dashboard_viewer_source_error(v)
+            if problem:
+                raise ValueError(f"from_viewer {problem}")
+        return v
 
     @model_validator(mode='after')
     def validate_has_source(self):
@@ -1767,7 +1797,27 @@ class DashboardAssetSource(BaseModel):
 
 DASHBOARD_COLUMN_TYPES = (
     "text", "bar", "tag", "number", "currency", "percent", "date", "datetime", "relative", "boolean", "link",
+    "masked",
 )
+
+# The fixed semantic colour set every coloured element uses (tags, status pills, card accents, text
+# callouts, attention items) — names, never hex, so the viewer and email map them to their palettes.
+DASHBOARD_TONES = ("success", "info", "warning", "error", "neutral")
+DashboardTone = Literal["success", "info", "warning", "error", "neutral"]
+
+_MASK_CHAR = "•"  # •
+
+
+def mask_dashboard_value(value: Any, visible: Optional[int] = None) -> Any:
+    """A `masked` field's display value — only the last `visible` characters (default 4) kept,
+    e.g. a bank account "0123456622" -> "•••• 6622". Applied server-side, so the full value is
+    never sent to the viewer, the CSV export or the email digest."""
+    if value is None or value == "":
+        return value
+    text = str(value)
+    keep = 4 if visible is None else max(0, int(visible))
+    tail = text[-keep:] if keep else ""
+    return f"{_MASK_CHAR * 4} {tail}".rstrip()
 
 
 class DashboardTileColumn(BaseModel):
@@ -1781,10 +1831,13 @@ class DashboardTileColumn(BaseModel):
     path: str
     type: Optional[Literal[
         "text", "bar", "tag", "number", "currency", "percent", "date", "datetime", "relative", "boolean", "link",
+        "masked",
     ]] = None  # default text
     max: Optional[float] = None         # bar: fixed scale (e.g. 100); default scales to the column's largest value
     currency: Optional[str] = None      # currency: ISO 4217 code, default USD
     link_text: Optional[str] = None     # link: fixed anchor text; default shows the URL
+    visible: Optional[int] = Field(None, ge=0)  # masked: trailing characters left readable (default 4)
+    tag_tones: Optional[dict[str, DashboardTone]] = None  # tag: value -> colour, e.g. {Paid: success}
 
 
 class LineChartSeries(BaseModel):
@@ -1864,6 +1917,104 @@ class ScatterQuadrants(BaseModel):
     labels: Optional[ScatterQuadrantLabels] = None
 
 
+class DashboardWorkflowInstancesSource(BaseModel):
+    """`source: {type: workflow_instances}` — the viewer's own submitted requests, as rows of
+    {uuid, reference, workflow, title, status, status_label, submitted_at, decided_at, href}.
+    `requested_by: viewer` is the only scope: a dashboard never lists other people's requests."""
+    type: Literal["workflow_instances"]
+    requested_by: Literal["viewer"] = "viewer"
+    workflows: Optional[list[str]] = None  # workflow names or uuids; omitted = every workflow
+
+    @field_validator("workflows")
+    @classmethod
+    def workflows_nonempty(cls, v):
+        if v is not None and (not v or any(not isinstance(w, str) or not w.strip() for w in v)):
+            raise ValueError("'workflows' must be a non-empty list of workflow names or uuids")
+        return v
+
+
+# A tile's `source:` — native assets, or the viewer's own workflow requests. Plain (smart-mode)
+# union rather than a discriminated one: older asset sources may omit `type`, which defaults.
+DashboardSource = Union[DashboardAssetSource, DashboardWorkflowInstancesSource]
+
+
+class DashboardAction(BaseModel):
+    """A button on a dashboard row or tile header. Exactly one target:
+      workflow — open that workflow's request form (name or uuid), pre-filled from `prefill`
+                 (form field -> per-row JSONata) and never auto-submitted;
+      href     — an app path ("/…") or http(s) URL; `{{field}}` placeholders take row values;
+      tab      — switch to that layout section in a `display: tabs` dashboard.
+    Dashboards stay read-only: an action only navigates, the change itself is a workflow request."""
+    label: str
+    workflow: Optional[str] = None
+    prefill: Optional[dict[str, str]] = None
+    href: Optional[str] = None
+    tab: Optional[str] = None
+    style: Optional[Literal["primary", "default"]] = None
+    enabled_when: Optional[str] = None  # per-row JSONata; falsy renders the button disabled
+
+    @model_validator(mode="after")
+    def one_target(self):
+        targets = [t for t in (self.workflow, self.href, self.tab) if t]
+        if len(targets) != 1:
+            raise ValueError(f"Action '{self.label}' needs exactly one of 'workflow', 'href' or 'tab'")
+        if self.prefill and not self.workflow:
+            raise ValueError(f"Action '{self.label}' 'prefill' only applies to a 'workflow' action")
+        return self
+
+
+class DashboardStatusSpec(BaseModel):
+    """A row's status pill: `text` and `tone` are per-row JSONata (tone -> one of DASHBOARD_TONES)."""
+    text: str
+    tone: Optional[str] = None
+
+
+class CardListItems(BaseModel):
+    """A card's line items, e.g. the products on a delivery. `path` is per-row JSONata returning a
+    list; `label`/`value` are JSONata per list item; `unit` is a fixed suffix ("pcs")."""
+    path: str
+    label: str
+    value: Optional[str] = None
+    unit: Optional[str] = None
+
+
+class AttentionItem(BaseModel):
+    """One kind of "needs your attention" entry: its own source, narrowed by `filter`, giving one
+    entry per remaining row. `title`/`detail` are per-row JSONata; `tone` is fixed per item."""
+    data_processor: Optional[DataSourceConfig] = None
+    source: Optional[DashboardSource] = None
+    row_path: Optional[str] = None
+    filter: Optional[str] = None
+    title: str
+    detail: Optional[str] = None
+    tone: DashboardTone = "info"
+    action: Optional[DashboardAction] = None
+
+    @model_validator(mode="after")
+    def one_source(self):
+        if (self.data_processor is None) == (self.source is None):
+            raise ValueError("Each attention_list item needs exactly one of 'data_processor' or 'source'")
+        return self
+
+
+class DashboardSectionBadge(BaseModel):
+    """A count shown on a section's tab: the number of entries in that tile's result — rows of a
+    table/card_list, attention_list items, or a stat's numeric value."""
+    tile: str
+
+
+class DashboardSection(FormSection):
+    """A layout section. Same placement as a workflow form section, plus an optional tab badge."""
+    badge: Optional[DashboardSectionBadge] = None
+
+
+class DashboardLayout(FormLayout):
+    """Dashboard layout: `display: tabs` shows one section at a time behind a tab row (badges on
+    the tabs); the default `sections` stacks them. Subclassed so workflow forms are unaffected."""
+    display: Optional[Literal["sections", "tabs"]] = None
+    sections: list[DashboardSection]
+
+
 class DashboardTile(BaseModel):
     """A single dashboard tile. One flat model discriminated by `type`, mirroring WorkflowStep's
     existing style in this file rather than a Pydantic discriminated union — each type only uses
@@ -1873,6 +2024,7 @@ class DashboardTile(BaseModel):
     type: Literal[
         "table", "stat", "bar_chart", "scatter", "line_chart",
         "pie_chart", "funnel", "heatmap", "timeline", "text", "summary_card",
+        "detail_card", "card_list", "attention_list",
     ]
     label: Optional[str] = None  # Tile display title (kept as `label`, not `title`, for compatibility)
     description: Optional[str] = None  # Optional subtitle shown under the title
@@ -1885,7 +2037,7 @@ class DashboardTile(BaseModel):
 
     # Exactly one of these two is required — see validate_source_specification
     data_processor: Optional[DataSourceConfig] = None
-    source: Optional[DashboardAssetSource] = None
+    source: Optional[DashboardSource] = None
 
     row_path: Optional[str] = None  # JSONata — which array in the response is "the rows"; unused for source: asset
     filter: Optional[str] = None    # JSONata predicate over the whole rows array; valid on every tile type
@@ -1935,8 +2087,11 @@ class DashboardTile(BaseModel):
     headline: Optional[Union[str, SummaryCardHeadline]] = None
     detail: Optional[str] = None        # per-row JSONata, optional
 
-    # text (no data source)
+    # text — static markdown, or (with a data source) markdown whose {{ expr }} placeholders are
+    # whole-set JSONata over {rows}, shown only while `show_if` holds
     content: Optional[str] = None       # markdown subset — headings, bold/italic, links, lists
+    tone: Optional[DashboardTone] = None  # text: render as a tinted info/warning/… banner
+    show_if: Optional[str] = None       # text with a source: whole-set JSONata; falsy hides the tile
 
     # summary_card — a headline number with breakdown boxes, a highlighted row and an action
     badge: Optional[SummaryCardBadge] = None
@@ -1944,15 +2099,36 @@ class DashboardTile(BaseModel):
     highlight: Optional[SummaryCardHighlight] = None
     action: Optional[SummaryCardAction] = None
 
+    # detail_card (one record) / card_list (one card per row) share fields/status/actions; card_list
+    # reuses timeline's per-row `headline` (card title) and `detail` (meta line), and table's
+    # sort_by/sort_order/limit — on card_list sort_by is a per-row JSONata expression.
+    fields: Optional[list[DashboardTileColumn]] = None   # label/value grid, same shape as table columns
+    status: Optional[DashboardStatusSpec] = None         # per-row status pill
+    accent: Optional[str] = None                         # card_list: per-row JSONata -> tone for a left border
+    items: Optional[Union[CardListItems, list[AttentionItem]]] = None  # card_list line items / attention_list entries
+    note: Optional[str] = None                           # card_list: per-row JSONata, a line under the fields
+    actions: Optional[list[DashboardAction]] = None      # buttons per record / per card
+    header_actions: Optional[list[DashboardAction]] = None  # buttons in the tile header (no row context)
+    empty_text: Optional[str] = None                     # shown when there is nothing to list
+
     @model_validator(mode='after')
     def validate_source_specification(self):
         """Exactly one of data_processor or source, not both, not neither — except a `text` tile,
         which shows static content and takes neither."""
         has_processor = self.data_processor is not None
         has_source = self.source is not None
-        if self.type == "text":
+        if self.type == "attention_list":
+            # Each item brings its own source; the tile itself reads none.
             if has_processor or has_source:
-                raise ValueError(f"Tile '{self.id}' of type 'text' takes no 'data_processor' or 'source'")
+                raise ValueError(f"Tile '{self.id}' of type 'attention_list' takes its sources per item, not on the tile")
+            return self
+        if self.type == "text":
+            # A text tile is static unless it reads data for its {{ }} placeholders / show_if —
+            # then, like any other tile, at most one source.
+            if has_processor and has_source:
+                raise ValueError(f"Tile '{self.id}' of type 'text' takes 'data_processor' or 'source', not both")
+            if self.show_if and not (has_processor or has_source):
+                raise ValueError(f"Tile '{self.id}' 'show_if' needs a 'data_processor' or 'source' to read rows from")
             return self
         if has_processor == has_source:
             raise ValueError(
@@ -1991,6 +2167,16 @@ class DashboardTile(BaseModel):
                 raise ValueError(f"Tile '{self.id}' of type 'summary_card' requires 'headline: {{metric, caption}}'")
             if self.breakdown and len(self.breakdown) > 4:
                 raise ValueError(f"Tile '{self.id}' summary_card 'breakdown' takes at most 4 items")
+        elif self.type == "detail_card" and not self.fields:
+            raise ValueError(f"Tile '{self.id}' of type 'detail_card' requires non-empty 'fields'")
+        elif self.type == "card_list":
+            if not isinstance(self.headline, str) or not self.headline:
+                raise ValueError(f"Tile '{self.id}' of type 'card_list' requires 'headline' (the per-row card title)")
+            if self.items is not None and not isinstance(self.items, CardListItems):
+                raise ValueError(f"Tile '{self.id}' card_list 'items' takes {{path, label, value?, unit?}}")
+        elif self.type == "attention_list":
+            if not isinstance(self.items, list) or not self.items:
+                raise ValueError(f"Tile '{self.id}' of type 'attention_list' requires a non-empty 'items' list")
         return self
 
 
@@ -2033,7 +2219,7 @@ class Dashboard(BaseModel):
     view_roles: Optional[list[str]] = None
     controls: Optional[list[DashboardControl]] = None
     tiles: list[DashboardTile]
-    layout: FormLayout
+    layout: DashboardLayout
     subscriptions: Optional[list[DashboardSubscription]] = None
 
     @field_validator('controls')
@@ -2069,6 +2255,8 @@ class Dashboard(BaseModel):
             if section.columns:
                 for col in section.columns:
                     referenced.update(col)
+            if section.badge:
+                referenced.add(section.badge.tile)
             for tile_id in referenced:
                 if tile_id not in tile_ids:
                     raise ValueError(
