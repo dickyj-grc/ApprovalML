@@ -3658,8 +3658,8 @@ STEP_TYPES = {
     },
     "automatic": {
         "required_props": ["on_complete"],
-        "optional_props": ["api", "data_processor", "asset", "field_mapping", "loop", "on_failure", "typst_render", "roster_classify", "roster_apply"],
-        "requires_one_of": ["api", "data_processor", "asset", "field_mapping", "roster_classify", "roster_apply"],
+        "optional_props": ["api", "data_processor", "asset", "field_mapping", "loop", "on_failure", "typst_render", "roster_classify", "roster_apply", "drift_classify"],
+        "requires_one_of": ["api", "data_processor", "asset", "field_mapping", "roster_classify", "roster_apply", "drift_classify"],
         "field_mapping_description": (
             "Extracts and transforms values from webhook payloads or API responses into form fields. "
             "Supports three types: (1) Simple JSONPath extraction: { field: '$.path' }, "
@@ -3681,6 +3681,18 @@ STEP_TYPES = {
             "description": (
                 "Save reviewer decisions. Approved rows become employees or shared-account grants. "
                 "Rejected rows, or force_reject, store a dismissal and do not change the directory."
+            ),
+        },
+        "drift_classify_props": {
+            "required": ["buckets"],
+            "optional": ["lookback_days", "app", "app_instance_id", "ai_rank", "ai_confidence_threshold"],
+            "description": (
+                "After a DriftWatch JSONata diff, match finding rows to recent completed Aptiwise "
+                "approvals (provision/update/revoke workflows from Access App Registry). Exact "
+                "email+app+instance+role match first; optional ai_rank for fuzzy leftovers. "
+                "Each bucket: findings_from, explained_to, match (provision|update|revoke). "
+                "Explained rows get explained_by_instance_id + evidence_summary and leave the "
+                "human checklist; unexplained stay in findings_from."
             ),
         },
         "data_processor_props": {
