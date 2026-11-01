@@ -2489,7 +2489,7 @@ notify_completion:
   name: "Notify Completion"
   type: "notification"
   recipients:
-    - email: "${instance.requester_email}"  # Variable reference
+    - email: "${requestor.email}"  # Variable reference
     - role: "finance_team"                   # Role-based
     - user_id: 123                           # Specific user ID
   notification:
@@ -2516,9 +2516,15 @@ notify_completion:
 5. Supports multi-channel delivery (email + Slack, etc.)
 
 **Recipient Types:**
-- `email: "user@example.com"` or `email: "${instance.requester_email}"` - Direct email (channel defaults to email)
+- `email: "user@example.com"` or `email: "${requestor.email}"` - Direct email (channel defaults to email)
 - `role: "finance_team"` - All users with this role
 - `user_id: 123` - Specific user by ID
+
+**Templates in an `email:` field** (notification recipients and dynamic approvers alike):
+- `${form.<field>}` - a form field holding an email address
+- `${requestor.email}` (also `name`, `department`, `role`, `phone_number`) - the requestor's own field
+- `${requestor.<level>_email}` - the email of the requestor's `supervisor`, `manager`, `head_of_department` or `level_N`, e.g. `${requestor.supervisor_email}`
+- Nothing else resolves in an email field (e.g. `${instance.requester_email}` does not exist). The validator rejects other templates in an approver email; a recipient that does not resolve to an address is skipped and logged.
 - `channel: "slack"` + `to: "#approvals"` - Send to a specific channel or user
 - `channel: "teams"` + `to: "..."` - Send via Teams webhook (credentials from environment or SaaS config)
 
@@ -2824,7 +2830,7 @@ vendor_signature:
 - Signature stored against employee record
 
 ### Dynamic Approvers from Form Fields
-Use template variables to pull approver details from form data:
+Use template variables to pull approver details from form data. `email` also accepts `${requestor.email}`, `${requestor.<level>_email}` (e.g. `${requestor.supervisor_email}`) and the other fields listed under "Templates in an `email:` field" in the notification section; any other template is a validation error, and an email that still does not resolve at runtime stops the step instead of creating an employee:
 ```yaml
 client_acknowledgement:
   type: "decision"

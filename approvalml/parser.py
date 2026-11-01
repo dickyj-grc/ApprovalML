@@ -711,7 +711,7 @@ class SpawnLoopConfig(BaseModel):
 
 class NotificationRecipient(BaseModel):
     """Recipient configuration for notifications."""
-    email: Optional[str] = None      # Specific email or variable like ${instance.requester_email}
+    email: Optional[str] = None      # Specific email or variable like ${requestor.email}
     role: Optional[str] = None       # Role name like "finance_team"
     user_id: Optional[int] = None    # Specific user ID
     channel: Optional[str] = "email" # Channel slug (email, slack, teams, etc.)
