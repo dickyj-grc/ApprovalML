@@ -2076,6 +2076,7 @@ save_supplier_data:
 - `fields_from`: Dict of `{field_name: variable_name}` — writes each variable into the named field; other keys are preserved
 - `schema`: Optional asset schema name to assign on create, or to backfill when the asset's `schema_id` is NULL (existing schema is never overwritten)
 - `schema_definition`: Optional `{description, fields, field_order}` used to auto-create the named schema when it does not yet exist for the company. Ignored without `schema:`.
+  - Field definitions may add `display_as: badge | dot` (default plain text) with `colors: {value: token}` to render a status visually in the Asset Register (e.g. a green dot for `pass`, red for `fail`). Tokens: `success`, `error`, `warning`, `info`, `neutral`, `primary`, `secondary`, `accent`. Keys must be `options` values for dropdown/multiselect, or `true`/`false` for boolean. Example: `result: {type: dropdown, options: [pass, fail], display_as: dot, colors: {pass: success, fail: error}}`
 
 **Test Mode Behavior:**
 - `asset` write (`data_from` / `merge_from` / `fields_from` / `field`+`data_from`): Writes to user-scoped sandbox copy; production asset is not modified
