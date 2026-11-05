@@ -885,7 +885,7 @@ notify_completion:
   name: "Notify Completion"
   type: "notification"
   recipients:
-    - email: "${instance.requester_email}"  # Variable reference
+    - email: "${requestor.email}"  # Variable reference
     - role: "finance_team"                   # Role-based
     - user_id: 123                           # Specific user ID
   notification:
@@ -912,7 +912,7 @@ notify_completion:
 5. Supports multi-channel delivery (email + Slack, etc.)
 
 **Recipient Types:**
-- `email: "user@example.com"` or `email: "${instance.requester_email}"` - Direct email
+- `email: "user@example.com"` or `email: "${requestor.email}"` - Direct email
 - `role: "finance_team"` - All users with this role
 - `user_id: 123` - Specific user by ID
 

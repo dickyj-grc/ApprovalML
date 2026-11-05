@@ -255,6 +255,15 @@ def test_from_viewer_rejects_unknown_field():
         DataSourceParameterMapping(name="x", from_viewer="not_a_real_field")
 
 
+# @lat: [[dashboards#Partner portals#Viewer external ids#Only well-formed system names parse]]
+def test_from_viewer_accepts_external_ids_with_a_system_name():
+    assert DataSourceParameterMapping(name="x", from_viewer="external_ids.odoo").from_viewer == "external_ids.odoo"
+    assert DataSourceParameterMapping(name="x", from_viewer="external_ids.erp-2").from_viewer == "external_ids.erp-2"
+    for bad in ("external_ids.", "external_ids", "external_ids.odoo.partner", "external_ids.od oo"):
+        with pytest.raises(Exception, match="from_viewer"):
+            DataSourceParameterMapping(name="x", from_viewer=bad)
+
+
 def test_parameter_mapping_rejects_from_control_and_from_viewer_together():
     with pytest.raises(Exception):
         DataSourceParameterMapping(name="x", from_control="date_from", from_viewer="email")

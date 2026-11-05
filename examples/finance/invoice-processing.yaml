@@ -179,7 +179,7 @@ workflow:
     name: "Notify Completion"
     type: notification
     recipients:
-      - email: "${instance.requester_email}"
+      - email: "${requestor.email}"
       - role: "finance_team"
     notification:
       message:
@@ -244,7 +244,7 @@ workflow:
     name: "Notify Rejection"
     type: notification
     recipients:
-      - email: "${instance.requester_email}"
+      - email: "${requestor.email}"
     notification:
       message:
         subject: "Invoice Rejected - ${invoice_data.invoice_number}"

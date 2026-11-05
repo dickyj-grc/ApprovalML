@@ -2076,6 +2076,7 @@ save_supplier_data:
 - `fields_from`: Dict of `{field_name: variable_name}` — writes each variable into the named field; other keys are preserved
 - `schema`: Optional asset schema name to assign on create, or to backfill when the asset's `schema_id` is NULL (existing schema is never overwritten)
 - `schema_definition`: Optional `{description, fields, field_order}` used to auto-create the named schema when it does not yet exist for the company. Ignored without `schema:`.
+  - Field definitions may add `display_as: badge | dot` (default plain text) with `colors: {value: token}` to render a status visually in the Asset Register (e.g. a green dot for `pass`, red for `fail`). Tokens: `success`, `error`, `warning`, `info`, `neutral`, `primary`, `secondary`, `accent`. Keys must be `options` values for dropdown/multiselect, or `true`/`false` for boolean. Example: `result: {type: dropdown, options: [pass, fail], display_as: dot, colors: {pass: success, fail: error}}`
 
 **Test Mode Behavior:**
 - `asset` write (`data_from` / `merge_from` / `fields_from` / `field`+`data_from`): Writes to user-scoped sandbox copy; production asset is not modified
@@ -2489,7 +2490,7 @@ notify_completion:
   name: "Notify Completion"
   type: "notification"
   recipients:
-    - email: "${instance.requester_email}"  # Variable reference
+    - email: "${requestor.email}"  # Variable reference
     - role: "finance_team"                   # Role-based
     - user_id: 123                           # Specific user ID
   notification:
@@ -2516,9 +2517,15 @@ notify_completion:
 5. Supports multi-channel delivery (email + Slack, etc.)
 
 **Recipient Types:**
-- `email: "user@example.com"` or `email: "${instance.requester_email}"` - Direct email (channel defaults to email)
+- `email: "user@example.com"` or `email: "${requestor.email}"` - Direct email (channel defaults to email)
 - `role: "finance_team"` - All users with this role
 - `user_id: 123` - Specific user by ID
+
+**Templates in an `email:` field** (notification recipients and dynamic approvers alike):
+- `${form.<field>}` - a form field holding an email address
+- `${requestor.email}` (also `name`, `department`, `role`, `phone_number`) - the requestor's own field
+- `${requestor.<level>_email}` - the email of the requestor's `supervisor`, `manager`, `head_of_department` or `level_N`, e.g. `${requestor.supervisor_email}`
+- Nothing else resolves in an email field (e.g. `${instance.requester_email}` does not exist). The validator rejects other templates in an approver email; a recipient that does not resolve to an address is skipped and logged.
 - `channel: "slack"` + `to: "#approvals"` - Send to a specific channel or user
 - `channel: "teams"` + `to: "..."` - Send via Teams webhook (credentials from environment or SaaS config)
 
@@ -2824,7 +2831,7 @@ vendor_signature:
 - Signature stored against employee record
 
 ### Dynamic Approvers from Form Fields
-Use template variables to pull approver details from form data:
+Use template variables to pull approver details from form data. `email` also accepts `${requestor.email}`, `${requestor.<level>_email}` (e.g. `${requestor.supervisor_email}`) and the other fields listed under "Templates in an `email:` field" in the notification section; any other template is a validation error, and an email that still does not resolve at runtime stops the step instead of creating an employee:
 ```yaml
 client_acknowledgement:
   type: "decision"
@@ -2925,6 +2932,23 @@ settings:
     receipt_required: true
     policy_check: true
 ```
+
+### Email summary (`settings.notifications.email_summary`)
+
+Approval, acknowledgement and completion emails show a short summary of the request, so an approver with many pending requests can tell them apart without opening each one.
+
+```yaml
+settings:
+  notifications:
+    email_summary:
+      title: "${form.vendor_name} – ${form.total_amount}"   # appended to the workflow name in subject + heading
+      fields: [vendor_name, total_amount, due_date, purpose]  # shown as label/value rows, in this order
+```
+
+- `title` — optional. Only `${form.<field>}` placeholders are allowed; values are shown formatted (currency, dates, select labels). Empty values are dropped.
+- `fields` — optional list of form field names. `fields: []` shows no form values.
+- Without `email_summary`, emails show the first 5 filled form fields (signatures, files, line items and other non-text fields are skipped).
+- Emails identify a request by a short reference such as `#A3F9C21B` (the first 8 characters of the request's UUID), never by its sequential number. The completion PDF is attached as `approval_A3F9C21B.pdf`.
 
 ## Submission Criteria and View Access
 
@@ -3711,7 +3735,9 @@ STEP_TYPES = {
                 "write. `matches` is a JSONata boolean evaluated against check's raw "
                 "result — the author encodes create/update/delete semantics "
                 "themselves (e.g. `$exists(data[0])` for a create, `$count(data) = 0` "
-                "for a delete). If matches is true, the write is treated as already "
+                "for a delete); the workflow's request data is available as `request` "
+                "(e.g. `$count(data[email = $$.request.email]) > 0`). If matches is true, "
+                "the write is treated as already "
                 "done and is not re-run. Omitting verify entirely (the default) falls "
                 "back to re-running the step, unchanged from before this feature "
                 "existed — only add verify to a step where re-running its side effect "
