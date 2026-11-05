@@ -2933,6 +2933,23 @@ settings:
     policy_check: true
 ```
 
+### Email summary (`settings.notifications.email_summary`)
+
+Approval, acknowledgement and completion emails show a short summary of the request, so an approver with many pending requests can tell them apart without opening each one.
+
+```yaml
+settings:
+  notifications:
+    email_summary:
+      title: "${form.vendor_name} – ${form.total_amount}"   # appended to the workflow name in subject + heading
+      fields: [vendor_name, total_amount, due_date, purpose]  # shown as label/value rows, in this order
+```
+
+- `title` — optional. Only `${form.<field>}` placeholders are allowed; values are shown formatted (currency, dates, select labels). Empty values are dropped.
+- `fields` — optional list of form field names. `fields: []` shows no form values.
+- Without `email_summary`, emails show the first 5 filled form fields (signatures, files, line items and other non-text fields are skipped).
+- Emails identify a request by a short reference such as `#A3F9C21B` (the first 8 characters of the request's UUID), never by its sequential number. The completion PDF is attached as `approval_A3F9C21B.pdf`.
+
 ## Submission Criteria and View Access
 
 ### `submission_criteria` — Who Can Submit
