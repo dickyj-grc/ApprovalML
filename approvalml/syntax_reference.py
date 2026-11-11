@@ -3800,6 +3800,24 @@ STEP_TYPES = {
         "required_props": ["recipients", "notification", "on_complete"],
         "optional_props": []
     },
+    "sync": {
+        "required_props": ["phase", "on_complete"],
+        "optional_props": [
+            "name", "source", "unwrap", "target", "key", "key_normalize",
+            "asset_name", "map", "defaults", "compare", "ledger_status",
+            "save_to", "plan_from", "on_new", "on_changed", "on_orphan",
+            "allow_empty_source", "min_source_items", "on_failure",
+        ],
+        "sync_props": {
+            "phases": ["plan", "apply", "auto"],
+            "description": (
+                "Backend-owned ledger reconciliation. "
+                "Phase 'plan' computes new, changed, and orphan buckets without writing to the database. "
+                "Phase 'apply' executes batched ledger updates respecting reviewer decisions. "
+                "Phase 'auto' plans and applies in a single non-interactive step."
+            )
+        }
+    },
     "spawn": {
         "required_props": ["workflow"],
         "optional_props": ["items", "wait_for", "pass", "map", "merge_from", "return_all_as", "requestor_from", "draft", "on_complete", "on_failure"],
