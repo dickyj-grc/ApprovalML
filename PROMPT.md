@@ -771,15 +771,20 @@ routing_step:
   type: "conditional_split"
   description: "Dynamic Routing"
   choices:
-    - conditions: "amount > 10000 and urgency == 'critical'"
+    - label: "Critical and over 10k"          # optional: shown on the diagram instead of the expression
+      conditions: "amount > 10000 and urgency == 'critical'"
       continue_to: "ceo_approval"
-    - conditions: "department == 'engineering'"
+    - label: "Engineering request"
+      conditions: "department == 'engineering'"
       continue_to: "tech_approval"
     - conditions: "amount > 5000"
       continue_to: "manager_approval"
   default:
+    label: "Everything else"                  # optional; the diagram shows "Otherwise" without it
     continue_to: "auto_approve"
 ```
+
+Choice `label` is a short business description shown on the diagram; add one whenever `conditions` is long or technical. Any non-routing step may also set `actor: "Plane"` (who performs it, shown as a tag on the diagram).
 
 ### 4. Automatic Steps (`automatic`)
 **For data fetching and asset updates.** System processing without human interaction.

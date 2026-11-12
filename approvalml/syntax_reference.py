@@ -1821,15 +1821,23 @@ routing_step:
   type: "conditional_split"
   description: "Dynamic Routing"
   choices:
-    - conditions: "amount > 10000 and urgency == 'critical'"
+    - label: "Critical and over 10k"          # optional: shown on the diagram instead of the expression
+      conditions: "amount > 10000 and urgency == 'critical'"
       continue_to: "ceo_approval"
-    - conditions: "department == 'engineering'"
+    - label: "Engineering request"
+      conditions: "department == 'engineering'"
       continue_to: "tech_approval"
     - conditions: "amount > 5000"
       continue_to: "manager_approval"
   default:
+    label: "Everything else"                  # optional; the diagram shows "Otherwise" without it
     continue_to: "auto_approve"
 ```
+
+**Choice `label`** (optional, string): a short business description of the branch shown on the
+workflow diagram instead of the raw expression (the expression stays available on hover / in the
+technical view). Display-only, never affects routing. Always add one when `conditions` is long or
+technical, e.g. `label: "Assignee is the PR author"`.
 
 ### 4. Automatic Steps (`automatic`)
 **For data fetching and asset updates.** System processing without human interaction.
@@ -3052,6 +3060,8 @@ When generating ApprovalML YAML, ensure:
    - ❌ NEVER use: `approval` (this is deprecated)
 
 4. **Required Fields**: All steps must have `name`, `type`, and appropriate routing
+   - Optional on any non-routing step: `actor: "Plane"` (max 40 chars) — who performs the step,
+     shown as a tag on the diagram. Omit it to derive from the approver or data source app name.
 
 5. **Unique Names**: Step names must be unique within the workflow
 
