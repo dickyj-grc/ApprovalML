@@ -3806,6 +3806,29 @@ STEP_TYPES = {
             "filter_values: \"access_needed.app\")."
         )
     },
+    "lookup": {
+        "required_props": ["lookups", "on_complete"],
+        "optional_props": ["name", "on_not_found", "on_failure", "actor"],
+        "lookup_props": {
+            "required": ["category", "match", "fields_to"],
+            "optional": ["required"],
+        },
+        "description": (
+            "Finds one asset per entry in 'lookups' and copies its properties onto form fields — "
+            "the 'load reference table, pick the matching row, copy fields' pattern in one step "
+            "(replaces list_by_category + a JSONata filter step + a bool() conditional_split). "
+            "Each lookup: 'category' (asset category), 'match' ({asset_property: form_field} — "
+            "every pair must be equal, compared trimmed and case-insensitive; 'name' matches the "
+            "asset name), 'fields_to' ({form_field: asset_property}; 'name' and 'owner_email' "
+            "read the asset's own columns), optional 'required' (default true). "
+            "If a required lookup finds nothing, the step routes 'on_not_found' (fields from "
+            "missed lookups are set to null); without on_not_found it routes 'on_failure'. "
+            "An optional lookup (required: false) that misses just leaves its fields null. "
+            "Example: lookups: [{category: repo_mapping, match: {bitbucket_repo_full_name: "
+            "repo_full_name}, fields_to: {plane_project_id: plane_project_id}}], "
+            "on_not_found: {continue_to: end_unmapped_repo}."
+        )
+    },
     "notification": {
         "required_props": ["recipients", "notification", "on_complete"],
         "optional_props": []
