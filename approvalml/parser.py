@@ -47,6 +47,7 @@ class StepType(str, Enum):
     LOOP = "loop"  # Iterative sub-workflow execution with condition
     TEMPLATE_FORM = "template_form"  # Resolves a workflow's schema per row, no child instance created
     WAIT_WEBHOOK = "wait_webhook"  # Pauses execution and waits for webhook
+    LOOKUP = "lookup"  # Finds assets by matching properties and copies fields onto the form
     END = "end"
 
 
@@ -968,6 +969,10 @@ class WorkflowStep(BaseModel):
 
     # Data source configuration (for fetching external data)
     data_processor: Optional[DataSourceConfig] = None
+
+    # Asset lookups (for type: lookup)
+    lookups: Optional[list[dict]] = None
+    on_not_found: Optional[ActionConfig] = None
 
     # Webhook wait configuration (for type: wait_webhook)
     source: Optional[str] = None

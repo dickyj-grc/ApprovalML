@@ -1821,15 +1821,23 @@ routing_step:
   type: "conditional_split"
   description: "Dynamic Routing"
   choices:
-    - conditions: "amount > 10000 and urgency == 'critical'"
+    - label: "Critical and over 10k"          # optional: shown on the diagram instead of the expression
+      conditions: "amount > 10000 and urgency == 'critical'"
       continue_to: "ceo_approval"
-    - conditions: "department == 'engineering'"
+    - label: "Engineering request"
+      conditions: "department == 'engineering'"
       continue_to: "tech_approval"
     - conditions: "amount > 5000"
       continue_to: "manager_approval"
   default:
+    label: "Everything else"                  # optional; the diagram shows "Otherwise" without it
     continue_to: "auto_approve"
 ```
+
+**Choice `label`** (optional, string): a short business description of the branch shown on the
+workflow diagram instead of the raw expression (the expression stays available on hover / in the
+technical view). Display-only, never affects routing. Always add one when `conditions` is long or
+technical, e.g. `label: "Assignee is the PR author"`.
 
 ### 4. Automatic Steps (`automatic`)
 **For data fetching and asset updates.** System processing without human interaction.
@@ -3052,6 +3060,8 @@ When generating ApprovalML YAML, ensure:
    - ❌ NEVER use: `approval` (this is deprecated)
 
 4. **Required Fields**: All steps must have `name`, `type`, and appropriate routing
+   - Optional on any non-routing step: `actor: "Plane"` (max 40 chars) — who performs the step,
+     shown as a tag on the diagram. Omit it to derive from the approver or data source app name.
 
 5. **Unique Names**: Step names must be unique within the workflow
 
@@ -3794,6 +3804,29 @@ STEP_TYPES = {
             "filter_values is a JSONata expression evaluated against the instance's own request_data "
             "and must be set together with filter_field (e.g. filter_field: app, "
             "filter_values: \"access_needed.app\")."
+        )
+    },
+    "lookup": {
+        "required_props": ["lookups", "on_complete"],
+        "optional_props": ["name", "on_not_found", "on_failure", "actor"],
+        "lookup_props": {
+            "required": ["category", "match", "fields_to"],
+            "optional": ["required"],
+        },
+        "description": (
+            "Finds one asset per entry in 'lookups' and copies its properties onto form fields — "
+            "the 'load reference table, pick the matching row, copy fields' pattern in one step "
+            "(replaces list_by_category + a JSONata filter step + a bool() conditional_split). "
+            "Each lookup: 'category' (asset category), 'match' ({asset_property: form_field} — "
+            "every pair must be equal, compared trimmed and case-insensitive; 'name' matches the "
+            "asset name), 'fields_to' ({form_field: asset_property}; 'name' and 'owner_email' "
+            "read the asset's own columns), optional 'required' (default true). "
+            "If a required lookup finds nothing, the step routes 'on_not_found' (fields from "
+            "missed lookups are set to null); without on_not_found it routes 'on_failure'. "
+            "An optional lookup (required: false) that misses just leaves its fields null. "
+            "Example: lookups: [{category: repo_mapping, match: {bitbucket_repo_full_name: "
+            "repo_full_name}, fields_to: {plane_project_id: plane_project_id}}], "
+            "on_not_found: {continue_to: end_unmapped_repo}."
         )
     },
     "notification": {
