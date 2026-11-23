@@ -60,10 +60,10 @@ def _build_server(client: ApprovalMLClient, workflow_tools: dict[str, dict[str, 
             "MCP server dependencies not installed. "
             "Run: pip install 'approvalml[mcp]'"
         ) from e
-    server = Server("approvalml")
 
-    @server.list_tools()
-    async def list_tools() -> list[types.Tool]:
+    # mcp 2.x low-level API: handlers are passed to Server(...) instead of
+    # registered via @server.list_tools()/@server.call_tool() decorators.
+    def _tools() -> list[types.Tool]:
         native = [
             types.Tool(
                 name="request_approval",
@@ -208,15 +208,22 @@ def _build_server(client: ApprovalMLClient, workflow_tools: dict[str, dict[str, 
 
         return native + directory_tools
 
-    @server.call_tool()
-    async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextContent]:
-        try:
-            result = _dispatch(name, arguments, client, workflow_tools)
-            return [types.TextContent(type="text", text=json.dumps(result, indent=2))]
-        except Exception as exc:
-            return [types.TextContent(type="text", text=json.dumps({"error": str(exc)}))]
+    async def list_tools(ctx, params) -> types.ListToolsResult:
+        return types.ListToolsResult(tools=_tools())
 
-    return server
+    async def call_tool(ctx, params: types.CallToolRequestParams) -> types.CallToolResult:
+        try:
+            result = _dispatch(params.name, params.arguments or {}, client, workflow_tools)
+            return types.CallToolResult(
+                content=[types.TextContent(type="text", text=json.dumps(result, indent=2))]
+            )
+        except Exception as exc:
+            return types.CallToolResult(
+                content=[types.TextContent(type="text", text=json.dumps({"error": str(exc)}))],
+                is_error=True,
+            )
+
+    return Server("approvalml", version="0.1.0", on_list_tools=list_tools, on_call_tool=call_tool)
 
 
 def _dispatch(
