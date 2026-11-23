@@ -33,7 +33,7 @@ workflow:
       connector: "Claude AI"
       action: "analyze_image"
       parameters:
-        model: "claude-3-5-sonnet-20241022"
+        model: "claude-sonnet-5-5"
         max_tokens: 2048
         image_base64: "${form.invoice_file_base64}"
         prompt: |
